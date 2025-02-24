@@ -3,8 +3,24 @@ import UIKit
 
 final class HomeViewController: UIViewController {
     
-    private lazy var globeImageView: UIImageView = {
-        let image = UIImage(systemName: "globe")
+    private lazy var circuitTopImageView: UIImageView = {
+        let image = UIImage(named: "circuit-top")
+        let imageView = UIImageView(image: image)
+        imageView.contentMode = .scaleAspectFit
+        imageView.translatesAutoresizingMaskIntoConstraints = false
+        return imageView
+    }()
+
+    private lazy var circuitLeftImageView: UIImageView = {
+        let image = UIImage(named: "circuit-left")
+        let imageView = UIImageView(image: image)
+        imageView.contentMode = .scaleAspectFit
+        imageView.translatesAutoresizingMaskIntoConstraints = false
+        return imageView
+    }()
+
+    private lazy var circuitRightImageView: UIImageView = {
+        let image = UIImage(named: "circuit-right")
         let imageView = UIImageView(image: image)
         imageView.contentMode = .scaleAspectFit
         imageView.tintColor = .white
@@ -12,42 +28,128 @@ final class HomeViewController: UIViewController {
         return imageView
     }()
     
-    private lazy var hackThePlanetLabel: UILabel = {
+    private lazy var menuButton: UIButton = {
+        let button = UIButton()
+        let image = UIImage(named: "menu")
+        button.setImage(image, for: .normal)
+        button.addTarget(self, action: #selector(menuTapped), for: .touchUpInside)
+        button.translatesAutoresizingMaskIntoConstraints = false
+        return button
+    }()
+    
+    private lazy var textContainerView: UIView = {
+        let view = UIView()
+        view.backgroundColor = UIColor(named: "ContainerBackground")
+        view.translatesAutoresizingMaskIntoConstraints = false
+        view.clipsToBounds = true
+        view.layer.cornerRadius = 16
+        view.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
+        return view
+    }()
+
+    private lazy var beerusImageView: UIImageView = {
+        let image = UIImage(named: "BeerusHome")
+        let imageView = UIImageView(image: image)
+        imageView.contentMode = .scaleAspectFit
+        imageView.tintColor = .white
+        imageView.translatesAutoresizingMaskIntoConstraints = false
+        return imageView
+    }()
+    
+    private lazy var titleLabel: UILabel = {
         let label = UILabel()
-        label.textColor = .white
+        label.font = UIFont(name: "IBM Plex Mono Medium", size: 20)
+        label.text = "BEERUS\nframework"
         label.textAlignment = .center
-        label.font = .systemFont(ofSize: 24, weight: .bold)
-        label.text = "Hack the planet!"
+        label.numberOfLines = 0
+        label.tintColor = .white
         label.translatesAutoresizingMaskIntoConstraints = false
         return label
     }()
-
+    
+    private lazy var descriptionLabel: UILabel = {
+        let label = UILabel()
+        label.font = UIFont(name: "IBM Plex Mono Medium", size: 14)
+        label.text = "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed vel lorem ligula. Proin faucibus dolor erat, a ultricies ligula molestie scelerisque."
+        label.lineBreakMode = .byWordWrapping
+        label.numberOfLines = 0
+        label.tintColor = .white
+        label.translatesAutoresizingMaskIntoConstraints = false
+        return label
+    }()
+    
+    private lazy var footerLabel: UILabel = {
+        let label = UILabel()
+        label.font = UIFont(name: "IBM Plex Mono", size: 14)
+        label.text = "If you really know, you can hack\nBSDaemon"
+        label.textAlignment = .center
+        label.tintColor = .white
+        label.numberOfLines = 0
+        label.translatesAutoresizingMaskIntoConstraints = false
+        return label
+    }()
+    
     override func viewDidLoad() {
         super.viewDidLoad()
         applyViewCode()
     }
 }
 
+extension HomeViewController {
+    @objc func menuTapped() {
+        Alert.show(title: "Hack the planet!")
+    }
+}
+
 extension HomeViewController: ViewCode {
     func buildViewHierarchy() {
-        view.addSubview(globeImageView)
-        view.addSubview(hackThePlanetLabel)
+        view.addSubview(circuitTopImageView)
+        view.addSubview(circuitRightImageView)
+        view.addSubview(circuitLeftImageView)
+        view.addSubview(menuButton)
+        view.addSubview(textContainerView)
+        view.addSubview(beerusImageView)
+        textContainerView.addSubview(titleLabel)
+        textContainerView.addSubview(descriptionLabel)
+        textContainerView.addSubview(footerLabel)
     }
     
     func setupConstraints() {
         NSLayoutConstraint.activate([
-            globeImageView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            globeImageView.centerYAnchor.constraint(equalTo: view.centerYAnchor, constant: -32),
-            globeImageView.widthAnchor.constraint(equalToConstant: 52),
-            globeImageView.heightAnchor.constraint(equalToConstant: 52),
+            circuitTopImageView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            circuitTopImageView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 32),
             
-            hackThePlanetLabel.topAnchor.constraint(equalTo: globeImageView.bottomAnchor, constant: 24),
-            hackThePlanetLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            hackThePlanetLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            circuitRightImageView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            circuitRightImageView.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -8),
+            
+            circuitLeftImageView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            circuitLeftImageView.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor),
+            
+            menuButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 16),
+            menuButton.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 24),
+            
+            textContainerView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            textContainerView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            textContainerView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            textContainerView.heightAnchor.constraint(equalToConstant: view.frame.height * 0.67),
+            
+            beerusImageView.bottomAnchor.constraint(equalTo: textContainerView.topAnchor),
+            beerusImageView.centerXAnchor.constraint(equalTo: textContainerView.centerXAnchor),
+
+            titleLabel.topAnchor.constraint(equalTo: textContainerView.topAnchor, constant: 24),
+            titleLabel.centerXAnchor.constraint(equalTo: textContainerView.centerXAnchor),
+            
+            descriptionLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 24),
+            descriptionLabel.leadingAnchor.constraint(equalTo: textContainerView.leadingAnchor, constant: 24),
+            descriptionLabel.trailingAnchor.constraint(equalTo: textContainerView.trailingAnchor, constant: -24),
+            
+            footerLabel.bottomAnchor.constraint(equalTo: textContainerView.bottomAnchor, constant: -24),
+            footerLabel.centerXAnchor.constraint(equalTo: textContainerView.centerXAnchor),
         ])
     }
     
     func setupAdditionalConfiguration() {
-        view.backgroundColor = .black
+        view.backgroundColor = UIColor(named: "Background")
+        navigationController?.isNavigationBarHidden = true
     }
 }
