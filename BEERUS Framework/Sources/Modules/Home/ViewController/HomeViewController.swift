@@ -1,7 +1,7 @@
 import Foundation
 import UIKit
 
-final class HomeViewController: UIViewController {
+final class HomeViewController: BaseViewController {
     
     private lazy var circuitTopImageView: UIImageView = {
         let image = UIImage(named: "circuit-top")
@@ -27,15 +27,7 @@ final class HomeViewController: UIViewController {
         imageView.translatesAutoresizingMaskIntoConstraints = false
         return imageView
     }()
-    
-    private lazy var menuButton: UIButton = {
-        let button = UIButton()
-        let image = UIImage(named: "menu")
-        button.setImage(image, for: .normal)
-        button.addTarget(self, action: #selector(menuTapped), for: .touchUpInside)
-        button.translatesAutoresizingMaskIntoConstraints = false
-        return button
-    }()
+
     
     private lazy var textContainerView: UIView = {
         let view = UIView()
@@ -95,18 +87,11 @@ final class HomeViewController: UIViewController {
     }
 }
 
-extension HomeViewController {
-    @objc func menuTapped() {
-        Alert.show(title: "Hack the planet!")
-    }
-}
-
 extension HomeViewController: ViewCode {
     func buildViewHierarchy() {
         view.addSubview(circuitTopImageView)
         view.addSubview(circuitRightImageView)
         view.addSubview(circuitLeftImageView)
-        view.addSubview(menuButton)
         view.addSubview(textContainerView)
         view.addSubview(beerusImageView)
         textContainerView.addSubview(titleLabel)
@@ -124,10 +109,7 @@ extension HomeViewController: ViewCode {
             
             circuitLeftImageView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             circuitLeftImageView.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor),
-            
-            menuButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 16),
-            menuButton.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 24),
-            
+                        
             textContainerView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             textContainerView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             textContainerView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
@@ -147,9 +129,6 @@ extension HomeViewController: ViewCode {
             footerLabel.centerXAnchor.constraint(equalTo: textContainerView.centerXAnchor),
         ])
     }
-    
-    func setupAdditionalConfiguration() {
-        view.backgroundColor = UIColor(named: "Background")
-        navigationController?.isNavigationBarHidden = true
-    }
+
+
 }
