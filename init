@@ -1,0 +1,226 @@
+#!/bin/bash
+
+ProjectName="BEERUS Framework"
+isRootLess=true
+rootPath=""
+
+setup() {
+    if [ "$isRootLess" = true ]; then
+        rootPath="/var/jb"
+    fi
+}
+
+compileiOSCode (){
+    local codeFile="$1"
+    local entitlements="$2"
+    SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
+
+    clang -arch arm64 \
+    -isysroot "$SDK" \
+    -fobjc-arc \
+    -framework Foundation \
+    -framework CoreFoundation \
+    -O2 \
+    "$codeFile.m" -o "$codeFile"
+
+    ldid -S"$entitlements" "$codeFile"
+}
+
+newEntFile() {
+cat <<EOF > ent.plist
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>com.apple.private.security.no-container</key>
+	<true/>
+	<key>platform-application</key>
+	<true/>
+	<key>com.apple.private.security.setuid</key>
+	<true/>
+	<key>com.apple.private.security.no-sandbox</key>
+	<true/>
+	<key>proc_info-allow</key>
+	<true/>
+	<key>com.apple.private.security.storage.AppBundles</key>
+	<true/>
+	<key>com.apple.private.security.storage.AppDataContainers</key>
+	<true/>
+	<key>com.apple.security.iokit-user-client-class</key>
+	<array>
+		<string>AGXDeviceUserClient</string>
+		<string>IOHDIXControllerUserClient</string>
+		<string>IOSurfaceRootUserClient</string>
+	</array>
+	<key>com.apple.private.persona-mgmt</key>
+	<true/>
+	<key>com.apple.security.exception.shared-preference.read-write</key>
+	<array>
+		<string>io.hakaisecurity.beerus</string>
+	</array>
+	<key>com.apple.security.exception.files.absolute-path.read-write</key>
+	<array>
+		<string>/</string>
+	</array>
+	<key>com.apple.private.MobileContainerManager.allowed</key>
+	<true/>
+	<key>com.apple.springboard.launchapplications</key>
+	<true/>
+	<key>com.apple.backboardd.launchapplications</key>
+	<true/>
+	<key>com.apple.lsapplicationworkspace.rebuildappdatabases</key>
+	<true/>
+</dict>
+</plist>
+EOF
+}
+
+build() {
+    if [ -f "$ProjectName.deb" ]; then
+        rm "$ProjectName.deb"
+    fi
+
+    xcodebuild \
+    -project "$ProjectName.xcodeproj" \
+    -scheme "$ProjectName" \
+    -configuration Release \
+    -sdk iphoneos \
+    -derivedDataPath ./build \
+    CODE_SIGNING_ALLOWED=NO
+
+    mkdir -p .tmp/
+    mv "build/Build/Products/Release-iphoneos/$ProjectName.app" ".tmp/"
+    rm -rf ./build
+
+    cd .tmp/; 
+    
+    newEntFile
+    ldid -S"ent.plist" "$ProjectName.app"
+    cd ../
+
+
+
+    mkdir -p .deb/DEBIAN
+    mkdir -p .deb$rootPath/Applications/
+    mkdir -p .deb$rootPath/Library/LaunchDaemons
+    mkdir -p .deb$rootPath/usr/local/bin
+
+    mv ".tmp/$ProjectName.app" ".deb$rootPath/Applications/"
+    rm -rf .tmp/
+
+    cat <<EOF > .deb/DEBIAN/control
+Package: io.hakaisecurity.BEERUS-Framework
+Name: Beerus Framework
+Version: 1.0.0
+Architecture: iphoneos-arm64
+Description: teste
+Maintainer: Hakai Security
+Author: Hakai Security
+Section: Applications
+EOF
+
+    cat <<EOF > .deb/DEBIAN/postinst
+#!/bin/sh
+
+set -e
+
+chown root:wheel "$rootPath/Applications/$ProjectName.app/$ProjectName"
+chmod 6755 "$rootPath/Applications/$ProjectName.app/$ProjectName"
+uicache -p "$rootPath/Applications/$ProjectName.app"
+
+chown root:wheel "$rootPath/Library/LaunchDaemons/io.hakaisecurity.BEERUS-Framework.plist"
+chmod 644 "$rootPath/Library/LaunchDaemons/io.hakaisecurity.BEERUS-Framework.plist"
+
+launchctl bootstrap system "$rootPath/Library/LaunchDaemons/io.hakaisecurity.BEERUS-Framework.plist"
+
+exit 0
+EOF
+
+
+
+    cat <<EOF > .deb/DEBIAN/postrm
+#!/bin/sh
+set -e
+
+case "\$1" in
+  remove|purge)
+    # Exemplo: parar daemon (se existir)
+    if command -v launchctl >/dev/null 2>&1; then
+      launchctl bootout system "$rootPath/Library/LaunchDaemons/io.hakaisecurity.BEERUS-Framework.plist" 2>/dev/null || true
+    fi
+
+    # Exemplo: remover socket / arquivos runtime
+    rm -f /tmp/beerus.sock 2>/dev/null || true
+
+    # Rebuild ícones (se você instalou app)
+    if command -v uicache >/dev/null 2>&1; then
+      uicache -a 2>/dev/null || true
+    fi
+  ;;
+esac
+
+exit 0
+EOF
+
+
+    cat <<EOF > .deb/DEBIAN/prerm
+#!/bin/sh
+set -e
+
+case "\$1" in
+  remove|upgrade|deconfigure)
+    launchctl bootout system "$rootPath/Library/LaunchDaemons/io.hakaisecurity.BEERUS-Framework.plist" 2>/dev/null || true
+  ;;
+esac
+
+exit 0
+
+EOF
+
+
+    chmod 0775 .deb/DEBIAN/postinst
+    chmod 0755 .deb/DEBIAN/postrm
+    chmod 0755 .deb/DEBIAN/prerm
+    
+    cat <<EOF > .deb$rootPath/Library/LaunchDaemons/io.hakaisecurity.BEERUS-Framework.plist
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>io.hakaisecurity.BEERUS-Framework</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>$rootPath/usr/local/bin/BEERUS-Framework</string>
+  </array>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>KeepAlive</key>
+  <true/>
+
+  <key>UserName</key>
+  <string>root</string>
+</dict>
+</plist>
+EOF
+    
+    compileiOSCode "BEERUS Framework Daemon/BEERUS-Framework" "BEERUS Framework Daemon/ent.plist"
+    mv "BEERUS Framework Daemon/BEERUS-Framework" ".deb$rootPath/usr/local/bin/BEERUS-Framework"
+    
+    dpkg-deb -b .deb "$ProjectName.deb"
+    rm -rf .deb
+}
+
+
+
+
+if [ "$1" == "build" ]; then
+    setup
+    build
+    scp -P 2222 BEERUS\ Framework.deb root@127.0.0.1:/var/jb/var/root
+    ssh root@127.0.0.1 -p 2222 dpkg -r io.hakaisecurity.beerus-framework
+    ssh root@127.0.0.1 -p 2222 dpkg -i /var/jb/var/root/BEERUS\\ Framework.deb
+fi
