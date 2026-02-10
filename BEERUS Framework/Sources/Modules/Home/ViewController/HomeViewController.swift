@@ -1,34 +1,12 @@
-import Foundation
 import UIKit
 
 final class HomeViewController: BaseViewController {
-    
-    private lazy var circuitTopImageView: UIImageView = {
-        let image = UIImage(named: "circuit-top")
-        let imageView = UIImageView(image: image)
-        imageView.contentMode = .scaleAspectFit
-        imageView.translatesAutoresizingMaskIntoConstraints = false
-        return imageView
-    }()
 
-    private lazy var circuitLeftImageView: UIImageView = {
-        let image = UIImage(named: "circuit-left")
-        let imageView = UIImageView(image: image)
-        imageView.contentMode = .scaleAspectFit
-        imageView.translatesAutoresizingMaskIntoConstraints = false
-        return imageView
-    }()
+    private lazy var circuitTopImageView = UIImageView.circuit(named: "circuit-top")
+    private lazy var circuitLeftImageView = UIImageView.circuit(named: "circuit-left")
+    private lazy var circuitRightImageView = UIImageView.circuit(named: "circuit-right")
+    private lazy var beerusImageView = UIImageView.circuit(named: "BeerusHome")
 
-    private lazy var circuitRightImageView: UIImageView = {
-        let image = UIImage(named: "circuit-right")
-        let imageView = UIImageView(image: image)
-        imageView.contentMode = .scaleAspectFit
-        imageView.tintColor = .white
-        imageView.translatesAutoresizingMaskIntoConstraints = false
-        return imageView
-    }()
-
-    
     private lazy var textContainerView: UIView = {
         let view = UIView()
         view.backgroundColor = UIColor(named: "ContainerBackground")
@@ -39,47 +17,16 @@ final class HomeViewController: BaseViewController {
         return view
     }()
 
-    private lazy var beerusImageView: UIImageView = {
-        let image = UIImage(named: "BeerusHome")
-        let imageView = UIImageView(image: image)
-        imageView.contentMode = .scaleAspectFit
-        imageView.tintColor = .white
-        imageView.translatesAutoresizingMaskIntoConstraints = false
-        return imageView
-    }()
-    
-    private lazy var titleLabel: UILabel = {
-        let label = UILabel()
-        label.font = UIFont(name: "IBM Plex Mono Medium", size: 20)
-        label.text = "BEERUS\nframework"
-        label.textAlignment = .center
-        label.numberOfLines = 0
-        label.tintColor = .white
-        label.translatesAutoresizingMaskIntoConstraints = false
-        return label
-    }()
-    
-    private lazy var descriptionLabel: UILabel = {
-        let label = UILabel()
-        label.font = UIFont(name: "IBM Plex Mono Medium", size: 14)
-        label.text = "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed vel lorem ligula. Proin faucibus dolor erat, a ultricies ligula molestie scelerisque."
-        label.lineBreakMode = .byWordWrapping
-        label.numberOfLines = 0
-        label.tintColor = .white
-        label.translatesAutoresizingMaskIntoConstraints = false
-        return label
-    }()
-    
-    private lazy var footerLabel: UILabel = {
-        let label = UILabel()
-        label.font = UIFont(name: "IBM Plex Mono", size: 14)
-        label.text = "If you really know, you can hack\nBSDaemon"
-        label.textAlignment = .center
-        label.tintColor = .white
-        label.numberOfLines = 0
-        label.translatesAutoresizingMaskIntoConstraints = false
-        return label
-    }()
+    private lazy var titleLabel = UILabel.styled(
+        text: "BEERUS\nframework", font: AppFont.medium(20), alignment: .center, lines: 0
+    )
+    private lazy var descriptionLabel = UILabel.styled(
+        text: "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed vel lorem ligula. Proin faucibus dolor erat, a ultricies ligula molestie scelerisque.",
+        font: AppFont.medium(14), lines: 0
+    )
+    private lazy var footerLabel = UILabel.styled(
+        text: "If you really know, you can hack\nBSDaemon", font: AppFont.regular(14), alignment: .center, lines: 0
+    )
     
     override func viewDidLoad() {
         super.viewDidLoad()

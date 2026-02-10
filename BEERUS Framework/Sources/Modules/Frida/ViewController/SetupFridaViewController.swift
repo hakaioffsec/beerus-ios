@@ -1,125 +1,87 @@
 import UIKit
 
 final class SetupFridaViewController: BaseViewController {
-    
-    private lazy var circuitTopImageView: UIImageView = {
-        let image = UIImage(named: "circuit-top")
-        let imageView = UIImageView(image: image)
-        imageView.contentMode = .scaleAspectFit
-        imageView.translatesAutoresizingMaskIntoConstraints = false
-        return imageView
-    }()
 
-    private lazy var circuitLeftImageView: UIImageView = {
-        let image = UIImage(named: "circuit-left-2")
-        let imageView = UIImageView(image: image)
-        imageView.contentMode = .scaleAspectFit
-        imageView.translatesAutoresizingMaskIntoConstraints = false
-        return imageView
-    }()
+    private lazy var circuitTopImageView = UIImageView.circuit(named: "circuit-top")
+    private lazy var circuitLeftImageView = UIImageView.circuit(named: "circuit-left-2")
+    private lazy var circuitRightImageView = UIImageView.circuit(named: "circuit-right")
+    private lazy var circuitLeftDownImageView = UIImageView.circuit(named: "circuit-left-down")
 
-    private lazy var circuitRightImageView: UIImageView = {
-        let image = UIImage(named: "circuit-right")
-        let imageView = UIImageView(image: image)
-        imageView.contentMode = .scaleAspectFit
-        imageView.translatesAutoresizingMaskIntoConstraints = false
-        return imageView
-    }()
-
-    private lazy var circuitLeftDownImageView: UIImageView = {
-        let image = UIImage(named: "circuit-left-down")
-        let imageView = UIImageView(image: image)
-        imageView.contentMode = .scaleAspectFit
-        imageView.translatesAutoresizingMaskIntoConstraints = false
-        return imageView
-    }()
-    
     private lazy var fridaMenuImageView: UIImageView = {
-        let image = UIImage(named: "frida-menu-image")
-        let imageView = UIImageView(image: image)
-        imageView.contentMode = .scaleAspectFit
-        imageView.transform = CGAffineTransform(scaleX: 1.2, y: 1.2)
-        imageView.translatesAutoresizingMaskIntoConstraints = false
-        return imageView
+        let iv = UIImageView.circuit(named: "frida-menu-image")
+        iv.transform = CGAffineTransform(scaleX: 1.2, y: 1.2)
+        return iv
     }()
-    
-    private lazy var titleLabel: UILabel = {
-        let label = UILabel()
-        label.text = "Frida Setup"
-        label.font = UIFont(name: "IBM Plex Mono Bold", size: 20)
-        label.textAlignment = .center
-        label.numberOfLines = 0
-        label.tintColor = .white
-        label.translatesAutoresizingMaskIntoConstraints = false
-        return label
-    }()
-    
-    private func createButton(for packageManager: PackageManager) -> UIButton {
-        let button = UIButton()
-        button.setTitle(packageManager.title, for: .normal)
-        button.setTitleColor(.white, for: .normal)
-        button.backgroundColor = UIColor(named: "ButtonColor")
-        button.layer.cornerRadius = 10
-        button.isHidden = !packageManager.isInstalled
-        button.addTarget(self, action: #selector(buttonTapped(_:)), for: .touchUpInside)
-        button.tag = PackageManager.allCases.firstIndex(of: packageManager) ?? 0
-        return button
-    }
-    
-    private lazy var stackView: UIStackView = {
-        let stackView = UIStackView()
-        stackView.axis = .horizontal
-        stackView.distribution = .fillEqually
-        stackView.spacing = 10
-        stackView.translatesAutoresizingMaskIntoConstraints = false
-        return stackView
-    }()
-    
-    private lazy var fridaStatusLabel: UILabel = {
-        let label = UILabel()
-        label.text = "Running: Yes"
-        label.font = UIFont(name: "IBM Plex Mono Bold", size: 20)
-        label.textAlignment = .center
-        label.numberOfLines = 0
-        label.tintColor = .white
-        label.translatesAutoresizingMaskIntoConstraints = false
-        return label
-    }()
-    
+
+    private lazy var titleLabel = UILabel.styled(
+        text: "Frida Setup", font: AppFont.bold(20), alignment: .center, lines: 0
+    )
+    private lazy var fridaStatusLabel = UILabel.styled(
+        text: "Running: ...", font: AppFont.bold(20), alignment: .center, lines: 0
+    )
+    private lazy var downloadFridaButton = UIButton.styled(
+        title: "Download Frida", target: self, action: #selector(downloadFridaTapped)
+    )
+    private lazy var restartFridaButton = UIButton.styled(
+        title: "Restart Frida Server", target: self, action: #selector(restartFridaTapped)
+    )
+
     override func viewDidLoad() {
         super.viewDidLoad()
         applyViewCode()
         checkFridaRunning()
-        
-        NotificationCenter.default.addObserver(self, selector: #selector(checkFridaRunning), name: UIApplication.didBecomeActiveNotification, object: nil)
-        NotificationCenter.default.addObserver(self, selector: #selector(checkFridaRunning), name: UIApplication.didEnterBackgroundNotification, object: nil)
+
+        let nc = NotificationCenter.default
+        nc.addObserver(self, selector: #selector(checkFridaRunning), name: UIApplication.didBecomeActiveNotification, object: nil)
+        nc.addObserver(self, selector: #selector(checkFridaRunning), name: UIApplication.didEnterBackgroundNotification, object: nil)
+        nc.addObserver(self, selector: #selector(fridaStatusDidChange), name: FridaChecker.statusDidChangeNotification, object: nil)
     }
-    
-    deinit {
-        NotificationCenter.default.removeObserver(self, name: UIApplication.didBecomeActiveNotification, object: nil)
-        NotificationCenter.default.removeObserver(self, name: UIApplication.didEnterBackgroundNotification, object: nil)
-    }
+
+    deinit { NotificationCenter.default.removeObserver(self) }
 }
 
 extension SetupFridaViewController {
-    @objc private func buttonTapped(_ sender: UIButton) {
-        let packageManager = PackageManager.allCases[sender.tag]
-        packageManager.open(source: "https://build.frida.re")
+    @objc private func downloadFridaTapped() {
+        let versionsVC = FridaVersionsViewController()
+        versionsVC.modalPresentationStyle = .pageSheet
+        present(versionsVC, animated: true)
     }
-    
+
     @objc private func checkFridaRunning() {
-        var statusText = "Running: No"
-        if let psOutput = Exec.command("ps", arguments: ["aux"]) {
-            let psFiltered = psOutput.split(separator: "\n").filter { $0.contains("frida-server") && !$0.contains("grep") }
-            let result = psFiltered.joined(separator: "\n")
-            
-            if !result.isEmpty {
-                statusText = "Running: Yes"
-            }
+        fridaStatusLabel.text = FridaChecker.isRunning() ? "Running: Yes" : "Running: No"
+    }
+
+    @objc private func fridaStatusDidChange() {
+        FridaChecker.checkAfterDelay { [weak self] running in
+            self?.fridaStatusLabel.text = running ? "Running: Yes" : "Running: No"
         }
-        
-        DispatchQueue.main.async {
-            self.fridaStatusLabel.text = statusText
+    }
+
+    @objc private func restartFridaTapped() {
+        guard RootExec.isAvailable else {
+            showAlert(title: "Daemon Offline", message: "The beerus daemon is not running. Make sure it is installed and started.")
+            return
+        }
+
+        restartFridaButton.isEnabled = false
+        restartFridaButton.setTitle("Restarting...", for: .normal)
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let result = RootExec.restartFrida()
+            sleep(2)
+            let success = result?.hasPrefix("ok") == true
+
+            DispatchQueue.main.async {
+                self?.restartFridaButton.isEnabled = true
+                self?.restartFridaButton.setTitle("Restart Frida Server", for: .normal)
+                self?.checkFridaRunning()
+
+                if success {
+                    FridaChecker.notifyStatusChanged()
+                } else {
+                    self?.showAlert(title: "Restart Failed", message: result ?? "No response from daemon")
+                }
+            }
         }
     }
 }
@@ -127,22 +89,14 @@ extension SetupFridaViewController {
 extension SetupFridaViewController: ViewCode {
     func buildViewHierarchy() {
         view.addSubview(titleLabel)
-
         view.addSubview(circuitTopImageView)
         view.addSubview(circuitRightImageView)
         view.addSubview(circuitLeftImageView)
         view.addSubview(circuitLeftDownImageView)
-        
         view.addSubview(fridaMenuImageView)
         view.addSubview(fridaStatusLabel)
-        
-        view.addSubview(stackView)
-
-        
-        PackageManager.allCases.forEach { packageManager in
-            let button = createButton(for: packageManager)
-            stackView.addArrangedSubview(button)
-        }
+        view.addSubview(restartFridaButton)
+        view.addSubview(downloadFridaButton)
     }
     
     func setupConstraints() {
@@ -171,11 +125,16 @@ extension SetupFridaViewController: ViewCode {
             
             fridaStatusLabel.topAnchor.constraint(equalTo: fridaMenuImageView.bottomAnchor, constant: 24),
             fridaStatusLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-                        
-            stackView.topAnchor.constraint(equalTo: fridaStatusLabel.bottomAnchor, constant: 24),
-            stackView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 24),
-            stackView.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -24),
-            stackView.heightAnchor.constraint(equalToConstant: 50),
+
+            restartFridaButton.topAnchor.constraint(equalTo: fridaStatusLabel.bottomAnchor, constant: 16),
+            restartFridaButton.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 24),
+            restartFridaButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -24),
+            restartFridaButton.heightAnchor.constraint(equalToConstant: 50),
+
+            downloadFridaButton.topAnchor.constraint(equalTo: restartFridaButton.bottomAnchor, constant: 16),
+            downloadFridaButton.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 24),
+            downloadFridaButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -24),
+            downloadFridaButton.heightAnchor.constraint(equalToConstant: 50),
         ])
     }
 }

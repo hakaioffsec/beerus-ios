@@ -42,7 +42,7 @@ final class SideMenuCell: UITableViewCell {
     
     func configure(with option: TabOption, isSelected: Bool = false) {
         titleLabel.text = option.rawValue
-        iconImageView.image = UIImage(named: option.icon)?.withRenderingMode(.alwaysTemplate)
+        iconImageView.image = option.image
         
         if isSelected {
             backgroundColor = .RED

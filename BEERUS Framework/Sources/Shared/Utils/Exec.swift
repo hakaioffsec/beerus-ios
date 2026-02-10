@@ -2,53 +2,49 @@ import Foundation
 
 final class Exec {
 
-    static func command(_ launchPath: String, arguments: [String] = []) -> String? {
-        guard let fullPath = findCommandPath(for: launchPath) else {
-            return nil
-        }
+    @discardableResult
+    static func command(_ path: String, args: [String] = []) -> String? {
+        let fullPath = path.hasPrefix("/") ? path : findInPath(path)
+        guard let execPath = fullPath else { return nil }
 
-        var outputPipe = [Int32](repeating: 0, count: 2)
-        pipe(&outputPipe)
+        var pipe = [Int32](repeating: 0, count: 2)
+        guard Darwin.pipe(&pipe) == 0 else { return nil }
+        defer { close(pipe[0]) }
+
+        var actions: posix_spawn_file_actions_t?
+        posix_spawn_file_actions_init(&actions)
+        defer { posix_spawn_file_actions_destroy(&actions) }
+
+        posix_spawn_file_actions_adddup2(&actions, pipe[1], STDOUT_FILENO)
+        posix_spawn_file_actions_adddup2(&actions, pipe[1], STDERR_FILENO)
+        posix_spawn_file_actions_addclose(&actions, pipe[0])
 
         var pid: pid_t = 0
-        var fileActions: posix_spawn_file_actions_t?
-        posix_spawn_file_actions_init(&fileActions)
-        posix_spawn_file_actions_adddup2(&fileActions, outputPipe[1], STDOUT_FILENO)
-        posix_spawn_file_actions_adddup2(&fileActions, outputPipe[1], STDERR_FILENO)
-        posix_spawn_file_actions_addclose(&fileActions, outputPipe[0])
+        var argv: [UnsafeMutablePointer<CChar>?] = []
+        argv.append(strdup(execPath))
+        args.forEach { argv.append(strdup($0)) }
+        argv.append(nil)
+        defer { argv.compactMap { $0 }.forEach { free($0) } }
 
-        let argv: [UnsafeMutablePointer<CChar>?] = ([fullPath] + arguments).map { strdup($0) } + [nil]
-
-        let status = posix_spawn(&pid, fullPath, &fileActions, nil, argv, nil)
-
-        close(outputPipe[1])
-
-        guard status == 0 else {
+        guard posix_spawn(&pid, execPath, &actions, nil, argv, nil) == 0 else {
+            close(pipe[1])
             return nil
         }
+        close(pipe[1])
 
-        let fileHandle = FileHandle(fileDescriptor: outputPipe[0])
-        let outputData = fileHandle.readDataToEndOfFile()
-        fileHandle.closeFile()
+        let output = FileHandle(fileDescriptor: pipe[0]).readDataToEndOfFile()
+        waitpid(pid, nil, 0)
 
-        return String(data: outputData, encoding: .utf8)
+        return String(data: output, encoding: .utf8)
     }
 
-    private static func findCommandPath(for command: String) -> String? {
-        guard let path = getenv("PATH") else {
-            return nil
-        }
+    private static func findInPath(_ command: String) -> String? {
+        guard let pathEnv = getenv("PATH") else { return nil }
 
-        let pathString = String(cString: path)
-        let directories = pathString.split(separator: ":")
-
-        for directory in directories {
-            let fullPath = "\(directory)/\(command)"
-            if FileManager.default.isExecutableFile(atPath: fullPath) {
-                return fullPath
-            }
-        }
-        
-        return nil
+        return String(cString: pathEnv)
+            .split(separator: ":")
+            .lazy
+            .map { String($0) + "/" + command }
+            .first { FileManager.default.isExecutableFile(atPath: $0) }
     }
 }
