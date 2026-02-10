@@ -43,17 +43,27 @@ final class Exec {
         posix_spawn_file_actions_destroy(&fileActions)
         posix_spawnattr_destroy(&attr)
 
-        close(outputPipe[1])
+        posix_spawn_file_actions_adddup2(&actions, pipe[1], STDOUT_FILENO)
+        posix_spawn_file_actions_adddup2(&actions, pipe[1], STDERR_FILENO)
+        posix_spawn_file_actions_addclose(&actions, pipe[0])
 
-        guard status == 0 else {
+        var pid: pid_t = 0
+        var argv: [UnsafeMutablePointer<CChar>?] = []
+        argv.append(strdup(execPath))
+        args.forEach { argv.append(strdup($0)) }
+        argv.append(nil)
+        defer { argv.compactMap { $0 }.forEach { free($0) } }
+
+        guard posix_spawn(&pid, execPath, &actions, nil, argv, nil) == 0 else {
+            close(pipe[1])
             return nil
         }
+        close(pipe[1])
 
-        let fileHandle = FileHandle(fileDescriptor: outputPipe[0])
-        let outputData = fileHandle.readDataToEndOfFile()
-        fileHandle.closeFile()
+        let output = FileHandle(fileDescriptor: pipe[0]).readDataToEndOfFile()
+        waitpid(pid, nil, 0)
 
-        return String(data: outputData, encoding: .utf8)
+        return String(data: output, encoding: .utf8)
     }
     
     private static func findCommandPath(for command: String) -> String? {
@@ -61,17 +71,11 @@ final class Exec {
             return nil
         }
 
-        let pathString = String(cString: path)
-        let directories = pathString.split(separator: ":")
-
-        for directory in directories {
-            let fullPath = "\(directory)/\(command)"
-            if FileManager.default.isExecutableFile(atPath: fullPath) {
-                return fullPath
-            }
-        }
-        
-        return nil
+        return String(cString: pathEnv)
+            .split(separator: ":")
+            .lazy
+            .map { String($0) + "/" + command }
+            .first { FileManager.default.isExecutableFile(atPath: $0) }
     }
     
     
