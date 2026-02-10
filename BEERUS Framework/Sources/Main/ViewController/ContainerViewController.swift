@@ -14,6 +14,10 @@ final class ContainerViewController: UIViewController {
     
     private lazy var homeViewController = HomeViewController()
     private lazy var setupFridaViewController = SetupFridaViewController()
+    private lazy var ipaExtractorViewController = IPAExtractorViewController()
+    private lazy var memoryDumpViewController = MemoryDumpViewController()
+    private lazy var lldbServerViewController = LLDBServerViewController()
+    private lazy var terminalViewController = TerminalViewController()
     
     private lazy var sideMenuView: SideMenuView = {
         let menu = SideMenuView()
@@ -29,20 +33,14 @@ final class ContainerViewController: UIViewController {
     }
     
     private func setupSwipeGestures() {
-        setupLeftSwipeGesture()
-        setupRightSwipeGesture()
+        addSwipeGesture(for: .left)
+        addSwipeGesture(for: .right)
     }
-    
-    private func setupLeftSwipeGesture() {
-        let swipeGesture = UIScreenEdgePanGestureRecognizer(target: self, action: #selector(handleSwipeGesture(_:)))
-        swipeGesture.edges = .left
-        view.addGestureRecognizer(swipeGesture)
-    }
-    
-    private func setupRightSwipeGesture() {
-        let swipeGesture = UIScreenEdgePanGestureRecognizer(target: self, action: #selector(handleSwipeGesture(_:)))
-        swipeGesture.edges = .right
-        view.addGestureRecognizer(swipeGesture)
+
+    private func addSwipeGesture(for edge: UIRectEdge) {
+        let gesture = UIScreenEdgePanGestureRecognizer(target: self, action: #selector(handleSwipeGesture(_:)))
+        gesture.edges = edge
+        view.addGestureRecognizer(gesture)
     }
     
     @objc private func handleSwipeGesture(_ gestureRecognizer: UIScreenEdgePanGestureRecognizer) {
@@ -65,9 +63,13 @@ extension ContainerViewController: ViewCode {
     
     func setupAdditionalConfiguration() {
         view.backgroundColor = .SIDE
-        
+
         homeViewController.menuDelegate = self
         setupFridaViewController.menuDelegate = self
+        ipaExtractorViewController.menuDelegate = self
+        memoryDumpViewController.menuDelegate = self
+        lldbServerViewController.menuDelegate = self
+        terminalViewController.menuDelegate = self
         sideMenuView.delegate = self
     }
     
@@ -91,33 +93,49 @@ extension ContainerViewController: MenuButtonDelegate {
     }
     
     func toggleMenu() {
-        switch menuState {
-        case .closed:
-            menuState = .opened
-            openMenuAnimation()
-            disableCurrentViewInteraction()
-        case .opened:
-            menuState = .closed
-            closeMenuAnimation()
-            enableCurrentViewInteraction()
+        if shouldPopNavigationStack() {
+            navController?.popToRootViewController(animated: true)
+            return
         }
+
+        menuState == .closed ? openMenu() : closeMenu()
     }
-    
-    
+
+    private func shouldPopNavigationStack() -> Bool {
+        guard let navController = navController else { return false }
+        return navController.viewControllers.count > 1
+    }
+
+    private func openMenu() {
+        menuState = .opened
+        openMenuAnimation()
+        disableCurrentViewInteraction()
+    }
+
+    private func closeMenu() {
+        menuState = .closed
+        closeMenuAnimation()
+        enableCurrentViewInteraction()
+    }
+
     private func openMenuAnimation() {
-        UIView.animate(withDuration: 0.5, delay: 0, usingSpringWithDamping: 0.8, initialSpringVelocity: 0, options: .curveEaseInOut) {
+        UIView.animate(withDuration: 0.5, delay: 0, usingSpringWithDamping: 0.8, initialSpringVelocity: 0, options: .curveEaseInOut) { [weak self] in
+            guard let self = self else { return }
+
             var transform = CATransform3DIdentity
             transform.m34 = -1.0 / 500
-            
+
             self.navController?.view.frame.origin.x = self.view.frame.width / 1.6
             self.navController?.view.layer.cornerRadius = 24
             self.navController?.view.layer.transform = CATransform3DRotate(transform, -16 * (.pi / 180), 0, 1, 0)
             self.sideMenuView.frame.origin.x = 0
         }
     }
-    
+
     private func closeMenuAnimation() {
-        UIView.animate(withDuration: 0.5, delay: 0, usingSpringWithDamping: 0.8, initialSpringVelocity: 0, options: .curveEaseInOut) {
+        UIView.animate(withDuration: 0.5, delay: 0, usingSpringWithDamping: 0.8, initialSpringVelocity: 0, options: .curveEaseInOut) { [weak self] in
+            guard let self = self else { return }
+
             self.navController?.view.layer.cornerRadius = 0
             self.navController?.view.layer.transform = CATransform3DIdentity
             self.navController?.view.frame.origin.x = 0
@@ -133,34 +151,36 @@ extension ContainerViewController: SideMenuViewDelegate {
             show(viewController: homeViewController)
         case .setupFrida:
             show(viewController: setupFridaViewController)
+        case .ipaExtractor:
+            show(viewController: ipaExtractorViewController)
+        case .memoryDump:
+            show(viewController: memoryDumpViewController)
+        case .lldbServer:
+            show(viewController: lldbServerViewController)
+        case .terminal:
+            show(viewController: terminalViewController)
         }
     }
     
     private func show(viewController: UIViewController) {
-        self.navController?.setViewControllers([viewController], animated: false)
-        disableCurrentViewInteraction()
+        navController?.setViewControllers([viewController], animated: false)
     }
 }
 
 extension ContainerViewController {
     
     private func disableCurrentViewInteraction() {
-        if let currentViewController = self.navController?.topViewController {
-            self.itemsToActive.removeAll()
-            for subview in currentViewController.view.subviews {
-                if subview.isUserInteractionEnabled == true && subview.tag != 10 {
-                    self.itemsToActive.append(subview)
-                    subview.isUserInteractionEnabled = false
-                }
-            }
-        }
+        guard let currentViewController = navController?.topViewController else { return }
 
-    }
-    
-    private func enableCurrentViewInteraction() {
-        for subview in self.itemsToActive {
-            subview.isUserInteractionEnabled = true
+        itemsToActive.removeAll()
+        for subview in currentViewController.view.subviews where subview.isUserInteractionEnabled && subview.tag != 10 {
+            itemsToActive.append(subview)
+            subview.isUserInteractionEnabled = false
         }
-        self.itemsToActive.removeAll()
+    }
+
+    private func enableCurrentViewInteraction() {
+        itemsToActive.forEach { $0.isUserInteractionEnabled = true }
+        itemsToActive.removeAll()
     }
 }
