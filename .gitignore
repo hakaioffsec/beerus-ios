@@ -59,3 +59,5 @@ fastlane/screenshots
 #
 # *.cert
 # *.mobileprovision
+BEERUS Framework.xcodeproj/project.pbxproj
+BEERUS Framework.deb
