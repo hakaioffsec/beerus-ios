@@ -1,17 +1,6 @@
 import Foundation
 import MachO
 
-struct daemonCommandResult: Decodable {
-    let result: String
-    let ok: Bool
-}
-
-struct beerusRequest: Encodable {
-    let action: String = "run_command"
-    let binary_path: String
-    let arguments: [String]
-}
-
 final class Exec {
     
     static func command(_ launchPath: String, arguments: [String] = [], findPath: Bool = true) -> String? {
@@ -43,27 +32,18 @@ final class Exec {
         posix_spawn_file_actions_destroy(&fileActions)
         posix_spawnattr_destroy(&attr)
 
-        posix_spawn_file_actions_adddup2(&actions, pipe[1], STDOUT_FILENO)
-        posix_spawn_file_actions_adddup2(&actions, pipe[1], STDERR_FILENO)
-        posix_spawn_file_actions_addclose(&actions, pipe[0])
+        close(outputPipe[1])
 
-        var pid: pid_t = 0
-        var argv: [UnsafeMutablePointer<CChar>?] = []
-        argv.append(strdup(execPath))
-        args.forEach { argv.append(strdup($0)) }
-        argv.append(nil)
-        defer { argv.compactMap { $0 }.forEach { free($0) } }
-
-        guard posix_spawn(&pid, execPath, &actions, nil, argv, nil) == 0 else {
-            close(pipe[1])
+        guard status == 0 else {
+            NSLog("Erro ao executar spawn: \(status)")
             return nil
         }
-        close(pipe[1])
 
-        let output = FileHandle(fileDescriptor: pipe[0]).readDataToEndOfFile()
-        waitpid(pid, nil, 0)
+        let fileHandle = FileHandle(fileDescriptor: outputPipe[0])
+        let outputData = fileHandle.readDataToEndOfFile()
+        fileHandle.closeFile()
 
-        return String(data: output, encoding: .utf8)
+        return String(data: outputData, encoding: .utf8)
     }
     
     private static func findCommandPath(for command: String) -> String? {
@@ -71,43 +51,19 @@ final class Exec {
             return nil
         }
 
-        return String(cString: pathEnv)
-            .split(separator: ":")
-            .lazy
-            .map { String($0) + "/" + command }
-            .first { FileManager.default.isExecutableFile(atPath: $0) }
-    }
-    
-    
-    static func commandAsRoot(_ launchPath: String, arguments: [String] = [], completion: @escaping (String) -> Void) {
-        do {
-            let client = UnixSockClient(path: "/tmp/beerus.sock")
-            
-            let requestObj = beerusRequest(binary_path: launchPath, arguments: arguments)
-            
-            let encoder = JSONEncoder()
-            let requestData = try encoder.encode(requestObj)
-            
-            guard let requestString = String(data: requestData, encoding: .utf8) else {
-                completion("")
-                return
+        let pathString = String(cString: path)
+        let directories = pathString.split(separator: ":")
+
+        for directory in directories {
+            let fullPath = "\(directory)/\(command)"
+            if FileManager.default.isExecutableFile(atPath: fullPath) {
+                return fullPath
             }
-            
-            let rawResponse = try client.request(requestString)
-            
-            guard let jsonData = rawResponse.data(using: .utf8) else {
-                completion("")
-                return
-            }
-            let decoded = try JSONDecoder().decode(daemonCommandResult.self, from: jsonData)
-            
-            completion(decoded.ok ? decoded.result : "")
-            
-        } catch {
-            completion("")
         }
+        
+        return nil
     }
-    
+
     static func isRootless() -> Bool{
         return FileManager.default.fileExists(atPath: "/var/jb")
     }

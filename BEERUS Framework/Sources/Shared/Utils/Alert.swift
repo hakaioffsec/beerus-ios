@@ -55,4 +55,49 @@ final class Alert {
     }
 
 
+    static func showMultipleInput(
+        title: String = "",
+        message: String = "",
+        inputs: [(name: String, placeholder: String)],
+        keyboardType: UIKeyboardType = .default,
+        completion: @escaping (_ values: [String: String]?) -> Void
+    ) {
+        let alert = UIAlertController(title: title, message: message, preferredStyle: .alert)
+
+        for input in inputs {
+            alert.addTextField { textField in
+                textField.placeholder = input.placeholder
+                textField.keyboardType = keyboardType
+            }
+        }
+
+        let actionCancel = UIAlertAction(title: "Cancel", style: .cancel) { _ in
+            completion(nil)
+        }
+
+        let actionConfirm = UIAlertAction(title: "OK", style: .default) { _ in
+            var result: [String: String] = [:]
+
+            if let textFields = alert.textFields {
+                for (index, field) in textFields.enumerated() {
+                    let key = inputs[index].name
+                    result[key] = field.text ?? ""
+                }
+            }
+
+            completion(result)
+        }
+
+        alert.addAction(actionCancel)
+        alert.addAction(actionConfirm)
+
+        DispatchQueue.main.async {
+            if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+            let rootViewController = windowScene.windows.first?.rootViewController {
+                rootViewController.present(alert, animated: true)
+            }
+        }
+    }
+
+
 }

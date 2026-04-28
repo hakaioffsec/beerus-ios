@@ -25,6 +25,10 @@ final class BeerusStrings {
     static var fridaDaemonPath: String {
         root + "Library/LaunchDaemons/re.frida.server.plist"
     }
+
+    static var fridaServerPath: String {
+        root + "usr/sbin/frida-server"
+    }
     
     static var tmp: String {
         root + "tmp/"
