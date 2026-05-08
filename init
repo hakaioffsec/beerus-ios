@@ -1,8 +1,63 @@
 #!/bin/bash
+set -e
 
 ProjectName="BEERUS Framework"
-isRootLess=true
+isRootLess=false
 rootPath=""
+
+IP="127.0.0.1"
+PORT="2222"
+COMMAND=""
+
+usage() {
+    cat <<USAGE
+Usage: $0 <command> [options]
+
+Commands:
+  build           Build .deb package only
+  install         Install existing .deb on device (requires --ip)
+  deploy          Build + install in one step
+  clean           Remove build artifacts
+
+Options:
+  --ip <addr>     Device IP address          (default: $IP)
+  --port <port>   SSH port                   (default: $PORT)
+  --rootless      Build for rootless jailbreak (palera1n/dopamine)
+  -h, --help      Show this help
+
+Examples:
+  $0 build
+  $0 deploy --ip 192.168.1.50 --port 22
+  $0 install --ip 192.168.1.50 --rootless
+  $0 deploy  # uses default IP=$IP PORT=$PORT
+USAGE
+    exit 0
+}
+
+# --- Parse arguments ---
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        build|install|deploy|clean)
+            COMMAND="$1"; shift ;;
+        --ip)
+            IP="$2"; shift 2 ;;
+        --port)
+            PORT="$2"; shift 2 ;;
+        --rootless)
+            isRootLess=true; shift ;;
+        -h|--help)
+            usage ;;
+        *)
+            echo "Unknown argument: $1"
+            usage ;;
+    esac
+done
+
+if [ -z "$COMMAND" ]; then
+    echo "Error: no command specified."
+    echo ""
+    usage
+fi
 
 setup() {
     if [ "$isRootLess" = true ]; then
@@ -24,6 +79,20 @@ compileiOSCode (){
     "$codeFile.m" -o "$codeFile"
 
     ldid -S"$entitlements" "$codeFile"
+}
+
+compileDaemon() {
+    SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
+
+    clang -arch arm64 \
+    -isysroot "$SDK" \
+    -miphoneos-version-min=14.0 \
+    -O2 -Wall \
+    -lproc \
+    -framework CoreFoundation \
+    Daemon/BeerusDaemon.c -o Daemon/beerusd
+ 
+    ldid -SDaemon/ent.plist Daemon/beerusd
 }
 
 newEntFile() {
@@ -112,7 +181,7 @@ build() {
 Package: io.hakaisecurity.BEERUS-Framework
 Name: Beerus Framework
 Version: 1.0.0
-Architecture: iphoneos-arm64
+Architecture: all
 Description: teste
 Maintainer: Hakai Security
 Author: Hakai Security
@@ -128,10 +197,19 @@ chown root:wheel "$rootPath/Applications/$ProjectName.app/$ProjectName"
 chmod 6755 "$rootPath/Applications/$ProjectName.app/$ProjectName"
 uicache -p "$rootPath/Applications/$ProjectName.app"
 
-chown root:wheel "$rootPath/Library/LaunchDaemons/io.hakaisecurity.BEERUS-Framework.plist"
-chmod 644 "$rootPath/Library/LaunchDaemons/io.hakaisecurity.BEERUS-Framework.plist"
+chown root:wheel "$rootPath/usr/local/bin/beerusd"
+chmod 755 "$rootPath/usr/local/bin/beerusd"
+chown root:wheel "$rootPath/Library/LaunchDaemons/com.beerus.daemon.plist"
+chmod 644 "$rootPath/Library/LaunchDaemons/com.beerus.daemon.plist"
 
-launchctl bootstrap system "$rootPath/Library/LaunchDaemons/io.hakaisecurity.BEERUS-Framework.plist"
+# Stop old daemon if upgrading
+launchctl bootout system "$rootPath/Library/LaunchDaemons/com.beerus.daemon.plist" 2>/dev/null || true
+# Also stop legacy daemon if present
+launchctl bootout system "$rootPath/Library/LaunchDaemons/io.hakaisecurity.BEERUS-Framework.plist" 2>/dev/null || true
+rm -f "$rootPath/Library/LaunchDaemons/io.hakaisecurity.BEERUS-Framework.plist" 2>/dev/null || true
+rm -f "$rootPath/usr/local/bin/BEERUS-Framework" 2>/dev/null || true
+
+launchctl bootstrap system "$rootPath/Library/LaunchDaemons/com.beerus.daemon.plist"
 
 exit 0
 EOF
@@ -144,15 +222,14 @@ set -e
 
 case "\$1" in
   remove|purge)
-    # Exemplo: parar daemon (se existir)
     if command -v launchctl >/dev/null 2>&1; then
-      launchctl bootout system "$rootPath/Library/LaunchDaemons/io.hakaisecurity.BEERUS-Framework.plist" 2>/dev/null || true
+      launchctl bootout system "$rootPath/Library/LaunchDaemons/com.beerus.daemon.plist" 2>/dev/null || true
     fi
 
-    # Exemplo: remover socket / arquivos runtime
-    rm -f /tmp/beerus.sock 2>/dev/null || true
+    killall beerusd 2>/dev/null || true
+    rm -f /var/run/beerus.sock 2>/dev/null || true
+    rm -f "$rootPath/usr/local/bin/beerusd" 2>/dev/null || true
 
-    # Rebuild ícones (se você instalou app)
     if command -v uicache >/dev/null 2>&1; then
       uicache -a 2>/dev/null || true
     fi
@@ -169,7 +246,8 @@ set -e
 
 case "\$1" in
   remove|upgrade|deconfigure)
-    launchctl bootout system "$rootPath/Library/LaunchDaemons/io.hakaisecurity.BEERUS-Framework.plist" 2>/dev/null || true
+    launchctl bootout system "$rootPath/Library/LaunchDaemons/com.beerus.daemon.plist" 2>/dev/null || true
+    killall beerusd 2>/dev/null || true
   ;;
 esac
 
@@ -182,17 +260,17 @@ EOF
     chmod 0755 .deb/DEBIAN/postrm
     chmod 0755 .deb/DEBIAN/prerm
     
-    cat <<EOF > .deb$rootPath/Library/LaunchDaemons/io.hakaisecurity.BEERUS-Framework.plist
+    cat <<EOF > .deb$rootPath/Library/LaunchDaemons/com.beerus.daemon.plist
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>io.hakaisecurity.BEERUS-Framework</string>
+  <string>com.beerus.daemon</string>
 
   <key>ProgramArguments</key>
   <array>
-    <string>$rootPath/usr/local/bin/BEERUS-Framework</string>
+    <string>$rootPath/usr/local/bin/beerusd</string>
   </array>
 
   <key>RunAtLoad</key>
@@ -207,20 +285,55 @@ EOF
 </plist>
 EOF
     
-    compileiOSCode "BEERUS Framework Daemon/BEERUS-Framework" "BEERUS Framework Daemon/ent.plist"
-    mv "BEERUS Framework Daemon/BEERUS-Framework" ".deb$rootPath/usr/local/bin/BEERUS-Framework"
+    compileDaemon
+    mv Daemon/beerusd ".deb$rootPath/usr/local/bin/beerusd"
     
     dpkg-deb -b .deb "$ProjectName.deb"
     rm -rf .deb
+
+    echo ""
+    echo "Package built: $ProjectName.deb"
 }
 
+install_deb() {
+    local deb="$ProjectName.deb"
 
+    if [ ! -f "$deb" ]; then
+        echo "Error: $deb not found. Run '$0 build' first."
+        exit 1
+    fi
 
+    echo ""
+    echo "Installing on $IP:$PORT ..."
 
-if [ "$1" == "build" ]; then
-    setup
-    build
-    scp -P 2222 BEERUS\ Framework.deb root@127.0.0.1:/var/jb/var/root
-    ssh root@127.0.0.1 -p 2222 dpkg -r io.hakaisecurity.beerus-framework
-    ssh root@127.0.0.1 -p 2222 dpkg -i /var/jb/var/root/BEERUS\\ Framework.deb
-fi
+    scp -P "$PORT" "$deb" "root@$IP:/var/root/"
+    ssh -p "$PORT" "root@$IP" "dpkg -r io.hakaisecurity.beerus-framework 2>/dev/null || true"
+    ssh -p "$PORT" "root@$IP" "dpkg -i /var/root/$(printf '%s' "$deb" | sed 's/ /\\ /g')"
+
+    echo "Installed on device"
+    rm -rf $deb
+}
+
+do_clean() {
+    rm -rf .deb .tmp build "$ProjectName.deb"
+    echo "Cleaned"
+}
+
+# --- Main ---
+setup
+
+case "$COMMAND" in
+    build)
+        build
+        ;;
+    install)
+        install_deb
+        ;;
+    deploy)
+        build
+        install_deb
+        ;;
+    clean)
+        do_clean
+        ;;
+esac

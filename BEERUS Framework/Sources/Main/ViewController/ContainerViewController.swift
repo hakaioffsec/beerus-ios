@@ -14,10 +14,12 @@ final class ContainerViewController: UIViewController {
     
     private lazy var homeViewController = HomeViewController()
     private lazy var setupFridaViewController = SetupFridaViewController()
+    private lazy var proxyProfilesViewController = ProxyProfilesViewController()
     private lazy var ipaExtractorViewController = IPAExtractorViewController()
     private lazy var memoryDumpViewController = MemoryDumpViewController()
     private lazy var lldbServerViewController = LLDBServerViewController()
     private lazy var terminalViewController = TerminalViewController()
+    private lazy var plistReaderViewController = PlistReaderViewController()
     
     private lazy var sideMenuView: SideMenuView = {
         let menu = SideMenuView()
@@ -66,10 +68,12 @@ extension ContainerViewController: ViewCode {
 
         homeViewController.menuDelegate = self
         setupFridaViewController.menuDelegate = self
+        proxyProfilesViewController.menuDelegate = self
         ipaExtractorViewController.menuDelegate = self
         memoryDumpViewController.menuDelegate = self
         lldbServerViewController.menuDelegate = self
         terminalViewController.menuDelegate = self
+        plistReaderViewController.menuDelegate = self
         sideMenuView.delegate = self
     }
     
@@ -157,8 +161,12 @@ extension ContainerViewController: SideMenuViewDelegate {
             show(viewController: memoryDumpViewController)
         case .lldbServer:
             show(viewController: lldbServerViewController)
+        case .proxyProfiles:
+            show(viewController: proxyProfilesViewController)
         case .terminal:
             show(viewController: terminalViewController)
+        case .plistReader:
+            show(viewController: plistReaderViewController)
         }
     }
     

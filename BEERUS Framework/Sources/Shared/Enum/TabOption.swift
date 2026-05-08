@@ -6,7 +6,9 @@ enum TabOption: String, CaseIterable {
     case ipaExtractor = "IPA Extractor"
     case memoryDump = "Memory Dump"
     case lldbServer = "LLDB Server"
+    case proxyProfiles = "Proxy Profiles"
     case terminal = "Terminal"
+    case plistReader = "Plist Reader"
 
     var icon: String {
         switch self {
@@ -15,7 +17,9 @@ enum TabOption: String, CaseIterable {
         case .ipaExtractor: return "ipa-extractor"
         case .memoryDump: return "memorychip"
         case .lldbServer: return "ant.fill"
+        case .proxyProfiles: return "network"
         case .terminal: return "terminal"
+        case .plistReader: return "house"
         }
     }
 
@@ -32,6 +36,9 @@ enum TabOption: String, CaseIterable {
                 .withRenderingMode(.alwaysTemplate)
         case .lldbServer:
             return UIImage(systemName: "ant.fill")?
+                .withRenderingMode(.alwaysTemplate)
+        case .proxyProfiles:
+            return UIImage(systemName: "wifi")?
                 .withRenderingMode(.alwaysTemplate)
         default:
             return UIImage(named: icon)?
