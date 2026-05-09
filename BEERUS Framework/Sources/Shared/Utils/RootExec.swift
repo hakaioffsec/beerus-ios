@@ -14,6 +14,7 @@ enum RootExec {
     static func restartFrida() -> String?       { send("RESTART_FRIDA") }
     static func installFrida(from path: String) -> String? { send("INSTALL_FRIDA \(path)") }
     static func uninstallFrida() -> String?     { send("UNINSTALL_FRIDA") }
+    static func installIPA(path: String) -> String? { send("INSTALL_IPA \(path)") }
 
     // MARK: - Shell (streaming)
 
