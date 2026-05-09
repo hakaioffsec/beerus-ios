@@ -77,6 +77,39 @@ final class FridaManager {
         )
     }
 
+<<<<<<< HEAD
+=======
+    // MARK: - Script Execution
+
+    func beginScript(source: String, pid: UInt) async throws -> ScriptSession {
+        device = nil
+        let dev = try await getDevice()
+        let session = try await attachWithRetry(device: dev, pid: pid)
+        let script = try await session.createScript(source)
+
+        let (stream, continuation) = AsyncStream<String>.makeStream()
+
+        let eventTask = Task {
+            for await event in script.events {
+                guard case .message(let m, _) = event else { continue }
+                if let data = try? JSONSerialization.data(withJSONObject: m),
+                   let json = String(data: data, encoding: .utf8) {
+                    continuation.yield(json)
+                }
+            }
+            continuation.finish()
+        }
+
+        try await script.load()
+
+        return ScriptSession(rawMessages: stream) {
+            eventTask.cancel()
+            try? await script.unload()
+            try? await session.detach()
+        }
+    }
+
+>>>>>>> ae68300 (feat: add script editor, and frida integration)
     // MARK: - Private
 
     private func getDevice() async throws -> Device {
@@ -295,6 +328,21 @@ struct MemoryDumpResult {
     let errors: Int
 }
 
+<<<<<<< HEAD
+=======
+final class ScriptSession {
+    let rawMessages: AsyncStream<String>
+    private let _stop: () async -> Void
+
+    init(rawMessages: AsyncStream<String>, stop: @escaping () async -> Void) {
+        self.rawMessages = rawMessages
+        self._stop = stop
+    }
+
+    func finish() async { await _stop() }
+}
+
+>>>>>>> ae68300 (feat: add script editor, and frida integration)
 enum FridaError: LocalizedError {
     case attachFailed, timeout, dumpFailed, memoryDumpFailed, rpcError(String)
 

@@ -16,9 +16,12 @@
 #include <errno.h>
 #include <fcntl.h>
 
+<<<<<<< HEAD
 
 
 // proc_pidpath declaration (not in public SDK)
+=======
+>>>>>>> ae68300 (feat: add script editor, and frida integration)
 #define PROC_PIDPATHINFO_MAXSIZE 4096
 extern int proc_pidpath(int pid, void *buffer, uint32_t buffersize);
 
@@ -26,7 +29,23 @@ extern int proc_pidpath(int pid, void *buffer, uint32_t buffersize);
 #define SOCK_PATH "/var/run/beerus.sock"
 #define BUF_SIZE 8192
 #define SHELL_BUF_SIZE 65536
+<<<<<<< HEAD
 #define ALLOWED_BUNDLE "BEERUS"
+=======
+
+#define ALLOWED_PATH_ROOTFUL  "/Applications/BEERUS Framework.app/BEERUS Framework"
+#define ALLOWED_PATH_ROOTLESS "/var/jb/Applications/BEERUS Framework.app/BEERUS Framework"
+
+// csops() is not in public headers but the syscall exists (SYS_csops = 169)
+extern int csops(pid_t pid, unsigned int ops, void *useraddr, size_t usersize);
+#define CS_OPS_CDHASH 5
+#define CS_CDHASH_LEN 20
+
+// Set at startup by computing the CDHash of the installed BEERUS binary.
+// Only a process with this exact CDHash can talk to the daemon.
+static uint8_t g_allowed_cdhash[CS_CDHASH_LEN];
+static int     g_cdhash_loaded = 0;
+>>>>>>> ae68300 (feat: add script editor, and frida integration)
 
 // Rootless prefix — set at startup
 #define ROOTLESS_PREFIX "/var/jb"
@@ -82,22 +101,117 @@ static void handle_signal(int sig) {
     running = 0;
 }
 
+<<<<<<< HEAD
 // verify client is beerus app
+=======
+// Load CDHash of the installed BEERUS binary at daemon startup.
+// We spawn a short-lived child from the app binary and read its CDHash,
+// or read it directly via ldid/codesign. Simplest: just read from the binary
+// on disk using csops on ourselves for format, but actually we need to
+// compute it. Best approach: spawn the binary briefly or use ldid.
+//
+// Simpler: at startup, find the BEERUS binary path, spawn it with a
+// special arg that makes it exit immediately, then grab its CDHash.
+// But even simpler: use the filesystem to read the CodeDirectory.
+//
+// Most practical for jailbreak: at startup, we find the app binary and
+// store its path. Then on each connection, we verify the client PID's
+// CDHash matches the CDHash we computed from the binary at startup.
+//
+// Actually, the most robust approach: on each connection, get the client
+// PID's CDHash via csops(), and compare it to the CDHash of the known
+// app binary (also obtained via csops on a spawned instance, or
+// pre-computed at build time).
+//
+// Simplest correct approach: at daemon startup, spawn the app binary
+// with a harmless arg, grab its cdhash via csops, kill it. OR:
+// just use csops(pid, CS_OPS_CDHASH) on the connecting client and
+// compare against a hash we read from the binary's code signature
+// embedded in the Mach-O.
+
+static int get_cdhash_for_pid(pid_t pid, uint8_t out[CS_CDHASH_LEN]) {
+    return csops(pid, CS_OPS_CDHASH, out, CS_CDHASH_LEN);
+}
+
+static void load_allowed_cdhash(void) {
+    const char *bin_path = g_rootless ? ALLOWED_PATH_ROOTLESS : ALLOWED_PATH_ROOTFUL;
+
+    if (access(bin_path, X_OK) != 0) {
+        fprintf(stderr, "beerusd: app binary not found at %s, CDHash auth disabled\n", bin_path);
+        return;
+    }
+
+    // Spawn the app binary with --beerus-cdhash-probe arg (it won't recognize it and exit)
+    pid_t pid;
+    char *argv[] = {(char *)bin_path, "--beerus-cdhash-probe", NULL};
+    posix_spawnattr_t attr;
+    posix_spawnattr_init(&attr);
+
+    int rc = posix_spawn(&pid, bin_path, NULL, &attr, argv, g_envp);
+    posix_spawnattr_destroy(&attr);
+
+    if (rc != 0) {
+        fprintf(stderr, "beerusd: failed to spawn app for CDHash probe (%d)\n", rc);
+        return;
+    }
+
+    // Give it a moment to be loaded into memory so kernel has its CDHash
+    usleep(100000);
+
+    if (get_cdhash_for_pid(pid, g_allowed_cdhash) == 0) {
+        g_cdhash_loaded = 1;
+        fprintf(stderr, "beerusd: CDHash loaded: ");
+        for (int i = 0; i < CS_CDHASH_LEN; i++)
+            fprintf(stderr, "%02x", g_allowed_cdhash[i]);
+        fprintf(stderr, "\n");
+    } else {
+        fprintf(stderr, "beerusd: csops failed for probe pid %d (errno %d)\n", pid, errno);
+    }
+
+    kill(pid, SIGKILL);
+    waitpid(pid, NULL, 0);
+}
+
+>>>>>>> ae68300 (feat: add script editor, and frida integration)
 static int verify_client(int fd) {
     pid_t pid;
     socklen_t len = sizeof(pid);
 
+<<<<<<< HEAD
     // get client pid
     if (getsockopt(fd, SOL_LOCAL, LOCAL_PEERPID, &pid, &len) != 0)
         return 0;
 
     // get executable path
+=======
+    if (getsockopt(fd, SOL_LOCAL, LOCAL_PEERPID, &pid, &len) != 0)
+        return 0;
+
+    // Layer 1: exact path match
+>>>>>>> ae68300 (feat: add script editor, and frida integration)
     char path[PROC_PIDPATHINFO_MAXSIZE];
     if (proc_pidpath(pid, path, sizeof(path)) <= 0)
         return 0;
 
+<<<<<<< HEAD
     // check if path contains bundle id
     return strstr(path, ALLOWED_BUNDLE) != NULL;
+=======
+    if (strcmp(path, ALLOWED_PATH_ROOTFUL) != 0 &&
+        strcmp(path, ALLOWED_PATH_ROOTLESS) != 0)
+        return 0;
+
+    // Layer 2: CDHash validation (cryptographic identity)
+    if (g_cdhash_loaded) {
+        uint8_t client_hash[CS_CDHASH_LEN];
+        if (get_cdhash_for_pid(pid, client_hash) != 0)
+            return 0;
+        if (memcmp(client_hash, g_allowed_cdhash, CS_CDHASH_LEN) != 0)
+            return 0;
+    }
+
+    return 1;
+>>>>>>> ae68300 (feat: add script editor, and frida integration)
 }
 
 // Find and kill all frida-server processes using POSIX APIs
@@ -339,13 +453,18 @@ char *runCommand(const char *binaryPath, const char **arguments, int argCount) {
     int pipefds[2];
     if (pipe(pipefds) != 0) {
         char *err_msg = malloc(128);
+<<<<<<< HEAD
         snprintf(err_msg, 128, "pipe() falhou: %s", strerror(errno));
+=======
+        snprintf(err_msg, 128, "pipe() failed: %s", strerror(errno));
+>>>>>>> ae68300 (feat: add script editor, and frida integration)
         return err_msg;
     }
 
     posix_spawn_file_actions_t actions;
     posix_spawn_file_actions_init(&actions);
 
+<<<<<<< HEAD
     // Redireciona stdout e stderr para o pipe
     posix_spawn_file_actions_adddup2(&actions, pipefds[1], STDOUT_FILENO);
     posix_spawn_file_actions_adddup2(&actions, pipefds[1], STDERR_FILENO);
@@ -355,6 +474,17 @@ char *runCommand(const char *binaryPath, const char **arguments, int argCount) {
     posix_spawn_file_actions_addclose(&actions, pipefds[1]);
 
     // Prepara os argumentos (argv)
+=======
+    // Redirect stdout and stderr to the pipe
+    posix_spawn_file_actions_adddup2(&actions, pipefds[1], STDOUT_FILENO);
+    posix_spawn_file_actions_adddup2(&actions, pipefds[1], STDERR_FILENO);
+
+    // Close unnecessary fds in child
+    posix_spawn_file_actions_addclose(&actions, pipefds[0]);
+    posix_spawn_file_actions_addclose(&actions, pipefds[1]);
+
+    // Build argv
+>>>>>>> ae68300 (feat: add script editor, and frida integration)
     char **args = malloc(sizeof(char *) * (argCount + 2));
     args[0] = (char *)binaryPath;
     for (int i = 0; i < argCount; i++) {
@@ -362,7 +492,11 @@ char *runCommand(const char *binaryPath, const char **arguments, int argCount) {
     }
     args[argCount + 1] = NULL;
 
+<<<<<<< HEAD
     // Define o ambiente (PATH do rootless é crucial aqui)
+=======
+    // Environment for spawned process
+>>>>>>> ae68300 (feat: add script editor, and frida integration)
     extern char g_path_env[2048]; 
     char *envp[] = {
         g_path_env,
@@ -394,11 +528,19 @@ char *runCommand(const char *binaryPath, const char **arguments, int argCount) {
         char buffer[1024];
         ssize_t bytesRead;
         while ((bytesRead = read(pipefds[0], buffer, sizeof(buffer) - 1)) > 0) {
+<<<<<<< HEAD
             // Verifica se precisa de mais espaço no buffer de output
             if (current_len + bytesRead >= output_size) {
                 output_size *= 2;
                 char *new_output = realloc(output, output_size);
                 if (!new_output) break; // Falha catastrófica de memória
+=======
+            // Grow output buffer if needed
+            if (current_len + bytesRead >= output_size) {
+                output_size *= 2;
+                char *new_output = realloc(output, output_size);
+                if (!new_output) break;
+>>>>>>> ae68300 (feat: add script editor, and frida integration)
                 output = new_output;
             }
             memcpy(output + current_len, buffer, bytesRead);
@@ -406,6 +548,7 @@ char *runCommand(const char *binaryPath, const char **arguments, int argCount) {
             output[current_len] = '\0';
         }
 
+<<<<<<< HEAD
         // Aguarda o processo terminar para não deixar "zumbi"
         int wstatus = 0;
         waitpid(pid, &wstatus, 0);
@@ -414,6 +557,16 @@ char *runCommand(const char *binaryPath, const char **arguments, int argCount) {
     }
 
     // Limpeza
+=======
+        // Reap child
+        int wstatus = 0;
+        waitpid(pid, &wstatus, 0);
+    } else {
+        snprintf(output, output_size, "posix_spawn failed: %s (%d)", strerror(spawnErr), spawnErr);
+    }
+
+    // Cleanup
+>>>>>>> ae68300 (feat: add script editor, and frida integration)
     close(pipefds[0]);
     posix_spawn_file_actions_destroy(&actions);
     free(args);
@@ -535,7 +688,11 @@ static void mremove(CFMutableDictionaryRef d, const char *k) {
     CFRelease(ks);
 }
 
+<<<<<<< HEAD
 // Encontra o ServiceID pelo CurrentSet + ServiceOrder + Interface ativa (Network/Interface)
+=======
+// Find ServiceID via CurrentSet + ServiceOrder + active Interface
+>>>>>>> ae68300 (feat: add script editor, and frida integration)
 static CFStringRef find_service_id(CFDictionaryRef root, char *out_set_uuid, size_t outsz_set, char *out_if, size_t outsz_if) {
     CFStringRef currentSet = (CFStringRef)dget(root, "CurrentSet");
     char cs[256];
@@ -557,14 +714,22 @@ static CFStringRef find_service_id(CFDictionaryRef root, char *out_set_uuid, siz
     CFDictionaryRef net = (CFDictionaryRef)dget(setDict, "Network");
     if (!net || CFGetTypeID(net) != CFDictionaryGetTypeID()) return NULL;
 
+<<<<<<< HEAD
     // Interface correta: Sets/<UUID>/Network/Interface
+=======
+    // Sets/<UUID>/Network/Interface
+>>>>>>> ae68300 (feat: add script editor, and frida integration)
     CFDictionaryRef ifaceDict = (CFDictionaryRef)dget(net, "Interface");
     if (!get_first_key_name(ifaceDict, out_if, outsz_if)) return NULL;
 
     // ServiceOrder: Sets/<UUID>/Network/Global/IPv4/ServiceOrder
     CFDictionaryRef glob = (CFDictionaryRef)dget(net, "Global");
     CFDictionaryRef ipv4 = glob ? (CFDictionaryRef)dget(ipv4 = (CFDictionaryRef)dget(glob, "IPv4"), "dummy") : NULL;
+<<<<<<< HEAD
     (void)ipv4; // evita warning se o compilador implicar
+=======
+    (void)ipv4;
+>>>>>>> ae68300 (feat: add script editor, and frida integration)
 
     CFDictionaryRef ipv4d = glob ? (CFDictionaryRef)dget(glob, "IPv4") : NULL;
     CFArrayRef order = ipv4d ? (CFArrayRef)dget(ipv4d, "ServiceOrder") : NULL;
@@ -675,7 +840,11 @@ static void handle_client(int fd) {
             goto done;
         }
 
+<<<<<<< HEAD
         // garante Proxies mutável
+=======
+        // Ensure Proxies dict is mutable
+>>>>>>> ae68300 (feat: add script editor, and frida integration)
         CFMutableDictionaryRef prox =
             (CFMutableDictionaryRef)dget((CFDictionaryRef)svc, "Proxies");
 
@@ -712,7 +881,11 @@ static void handle_client(int fd) {
         }
 
         if (strcmp(proxy, "OFF") == 0) {
+<<<<<<< HEAD
             // remove tudo
+=======
+            // Clear all proxy settings
+>>>>>>> ae68300 (feat: add script editor, and frida integration)
             mremove(prox, "HTTPEnable");
             mremove(prox, "HTTPSEnable");
             mremove(prox, "ProxyAutoConfigEnable");
@@ -806,7 +979,11 @@ static void handle_client(int fd) {
     } else if (strncmp(buf, "SHELL ", 6) == 0) {
         const char *cmd = buf + 6;
 
+<<<<<<< HEAD
         // 1. Determina o shell correto conforme o ambiente (Rootful vs Rootless)
+=======
+        // Resolve shell path
+>>>>>>> ae68300 (feat: add script editor, and frida integration)
         char shell_path[512];
         if (g_rootless) {
             snprintf(shell_path, sizeof(shell_path), "%s/bin/sh", ROOTLESS_PREFIX);
@@ -814,7 +991,11 @@ static void handle_client(int fd) {
             snprintf(shell_path, sizeof(shell_path), "/bin/sh");
         }
 
+<<<<<<< HEAD
         // 2. Prepara os argumentos para o shell
+=======
+        // Build shell args
+>>>>>>> ae68300 (feat: add script editor, and frida integration)
         const char *args[] = {"-c", cmd};
 
         // 3. Executa o comando via posix_spawn (versão limpa sem trailers internos)
@@ -873,8 +1054,13 @@ int main(void) {
     detect_rootless();
     fprintf(stderr, "beerusd: rootless=%d frida=%s\n", g_rootless, g_frida_server_path);
 
+<<<<<<< HEAD
     // Set PATH for popen/system calls that inherit environment
     putenv(g_path_env);
+=======
+    putenv(g_path_env);
+    load_allowed_cdhash();
+>>>>>>> ae68300 (feat: add script editor, and frida integration)
 
     unlink(SOCK_PATH);
 
@@ -896,8 +1082,13 @@ int main(void) {
         return 1;
     }
 
+<<<<<<< HEAD
     // allow mobile user to connect
     chmod(SOCK_PATH, 0666);
+=======
+    chown(SOCK_PATH, 0, 501);  // root:mobile
+    chmod(SOCK_PATH, 0660);
+>>>>>>> ae68300 (feat: add script editor, and frida integration)
 
     if (listen(srv, 5) < 0) {
         perror("listen");

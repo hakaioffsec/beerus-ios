@@ -20,6 +20,10 @@ final class ContainerViewController: UIViewController {
     private lazy var lldbServerViewController = LLDBServerViewController()
     private lazy var terminalViewController = TerminalViewController()
     private lazy var plistReaderViewController = PlistReaderViewController()
+<<<<<<< HEAD
+=======
+    private lazy var scriptListViewController = ScriptListViewController()
+>>>>>>> ae68300 (feat: add script editor, and frida integration)
     
     private lazy var sideMenuView: SideMenuView = {
         let menu = SideMenuView()
@@ -74,6 +78,10 @@ extension ContainerViewController: ViewCode {
         lldbServerViewController.menuDelegate = self
         terminalViewController.menuDelegate = self
         plistReaderViewController.menuDelegate = self
+<<<<<<< HEAD
+=======
+        scriptListViewController.menuDelegate = self
+>>>>>>> ae68300 (feat: add script editor, and frida integration)
         sideMenuView.delegate = self
     }
     
@@ -167,6 +175,11 @@ extension ContainerViewController: SideMenuViewDelegate {
             show(viewController: terminalViewController)
         case .plistReader:
             show(viewController: plistReaderViewController)
+<<<<<<< HEAD
+=======
+        case .scriptEditor:
+            show(viewController: scriptListViewController)
+>>>>>>> ae68300 (feat: add script editor, and frida integration)
         }
     }
     

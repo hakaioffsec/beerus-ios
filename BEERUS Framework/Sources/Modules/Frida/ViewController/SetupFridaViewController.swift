@@ -243,6 +243,20 @@ final class SetupFridaViewController: BaseViewController {
     
     
     
+<<<<<<< HEAD
+=======
+    private lazy var manageVersionsButton: UIButton = {
+        let button = UIButton()
+        button.setTitle("Manage Versions", for: .normal)
+        button.setTitleColor(.RED, for: .normal)
+        button.backgroundColor = UIColor(named: "ButtonColorWhite")
+        button.layer.cornerRadius = 10
+        button.titleLabel?.font = UIFont(name: "IBM Plex Mono Bold", size: 15)
+        button.addTarget(self, action: #selector(manageVersionsTapped), for: .touchUpInside)
+        return button
+    }()
+
+>>>>>>> ae68300 (feat: add script editor, and frida integration)
     private lazy var stackView: UIStackView = {
         let stackView = UIStackView()
         stackView.axis = .horizontal
@@ -278,9 +292,23 @@ final class SetupFridaViewController: BaseViewController {
         super.viewDidLoad()
         applyViewCode()
         checkFridaRunning()
+<<<<<<< HEAD
     }
 
     deinit { NotificationCenter.default.removeObserver(self) }
+=======
+
+        NotificationCenter.default.addObserver(self, selector: #selector(checkFridaRunning), name: FridaChecker.statusDidChangeNotification, object: nil)
+    }
+
+    deinit { NotificationCenter.default.removeObserver(self) }
+
+    @objc private func manageVersionsTapped() {
+        let vc = FridaVersionsViewController()
+        vc.modalPresentationStyle = .pageSheet
+        present(vc, animated: true)
+    }
+>>>>>>> ae68300 (feat: add script editor, and frida integration)
 }
 
 extension SetupFridaViewController {
@@ -349,10 +377,17 @@ extension SetupFridaViewController: ViewCode {
         view.addSubview(fridaStatusLabel)
         
         view.addSubview(stackView)
+<<<<<<< HEAD
 
         stackView.addArrangedSubview(versionDropdown)
         stackView.addArrangedSubview(buttonStart)
         
+=======
+        view.addSubview(manageVersionsButton)
+
+        stackView.addArrangedSubview(versionDropdown)
+        stackView.addArrangedSubview(buttonStart)
+>>>>>>> ae68300 (feat: add script editor, and frida integration)
     }
     
     func setupConstraints() {
@@ -389,6 +424,14 @@ extension SetupFridaViewController: ViewCode {
             stackView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 24),
             stackView.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -24),
             stackView.heightAnchor.constraint(equalToConstant: 50),
+<<<<<<< HEAD
+=======
+
+            manageVersionsButton.topAnchor.constraint(equalTo: stackView.bottomAnchor, constant: 16),
+            manageVersionsButton.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 24),
+            manageVersionsButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -24),
+            manageVersionsButton.heightAnchor.constraint(equalToConstant: 50),
+>>>>>>> ae68300 (feat: add script editor, and frida integration)
         ])
     }
 }

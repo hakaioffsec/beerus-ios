@@ -182,7 +182,11 @@ Package: io.hakaisecurity.BEERUS-Framework
 Name: Beerus Framework
 Version: 1.0.0
 Architecture: all
+<<<<<<< HEAD
 Description: teste
+=======
+Description: iOS security testing framework
+>>>>>>> ae68300 (feat: add script editor, and frida integration)
 Maintainer: Hakai Security
 Author: Hakai Security
 Section: Applications

@@ -26,7 +26,10 @@ final class Alert {
     ) {
         let alert = UIAlertController(title: title, message: message, preferredStyle: .alert)
 
+<<<<<<< HEAD
         // Campo de texto
+=======
+>>>>>>> ae68300 (feat: add script editor, and frida integration)
         alert.addTextField { textField in
             textField.placeholder = placeholder
             textField.keyboardType = keyboardType
