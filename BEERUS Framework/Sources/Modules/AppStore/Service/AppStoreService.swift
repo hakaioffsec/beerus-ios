@@ -229,4 +229,148 @@ final class AppStoreService {
     func revoke() {
         AppStoreCredentialManager.delete()
     }
+
+    // MARK: - Search
+
+    func search(term: String, limit: Int = 20) async throws -> [AppStoreApp] {
+        let account = try accountInfo()
+        guard let country = countryCode(from: account.storeFront) else {
+            throw AppStoreError.searchFailed("cannot resolve country code")
+        }
+
+        var components = URLComponents(string: "https://\(iTunesDomain)/search")!
+        components.queryItems = [
+            URLQueryItem(name: "entity", value: "software,iPadSoftware"),
+            URLQueryItem(name: "limit", value: "\(limit)"),
+            URLQueryItem(name: "media", value: "software"),
+            URLQueryItem(name: "term", value: term),
+            URLQueryItem(name: "country", value: country)
+        ]
+
+        let (data, response) = try await session.data(from: components.url!)
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+            throw AppStoreError.searchFailed("request failed")
+        }
+
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
+        guard let results = json["results"] as? [[String: Any]] else {
+            return []
+        }
+
+        return results.compactMap { dict in
+            guard let id = dict["trackId"] as? Int64 ?? (dict["trackId"] as? Int).map(Int64.init),
+                  let bundleID = dict["bundleId"] as? String,
+                  let name = dict["trackName"] as? String else { return nil }
+            return AppStoreApp(
+                id: id,
+                bundleID: bundleID,
+                name: name,
+                version: dict["version"] as? String ?? "",
+                price: dict["price"] as? Double ?? 0
+            )
+        }
+    }
+
+    // MARK: - Lookup
+
+    func lookup(bundleID: String) async throws -> AppStoreApp {
+        let account = try accountInfo()
+        guard let country = countryCode(from: account.storeFront) else {
+            throw AppStoreError.lookupFailed("cannot resolve country code")
+        }
+
+        var components = URLComponents(string: "https://\(iTunesDomain)/lookup")!
+        components.queryItems = [
+            URLQueryItem(name: "entity", value: "software,iPadSoftware"),
+            URLQueryItem(name: "limit", value: "1"),
+            URLQueryItem(name: "media", value: "software"),
+            URLQueryItem(name: "bundleId", value: bundleID),
+            URLQueryItem(name: "country", value: country)
+        ]
+
+        let (data, response) = try await session.data(from: components.url!)
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+            throw AppStoreError.lookupFailed("request failed")
+        }
+
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
+        guard let results = json["results"] as? [[String: Any]], let first = results.first,
+              let id = first["trackId"] as? Int64 ?? (first["trackId"] as? Int).map(Int64.init),
+              let bid = first["bundleId"] as? String,
+              let name = first["trackName"] as? String else {
+            throw AppStoreError.lookupFailed("app not found")
+        }
+
+        return AppStoreApp(
+            id: id, bundleID: bid, name: name,
+            version: first["version"] as? String ?? "",
+            price: first["price"] as? Double ?? 0
+        )
+    }
+
+    // MARK: - Purchase
+
+    func purchase(app: AppStoreApp) async throws {
+        if app.price > 0 {
+            throw AppStoreError.paidAppNotSupported
+        }
+
+        let account = try accountInfo()
+        let guid = getGUID()
+
+        do {
+            try await purchaseWithParams(account: account, app: app, guid: guid, pricing: "STDQ")
+        } catch AppStoreError.purchaseFailed(let msg) where msg == "temporarily unavailable" {
+            try await purchaseWithParams(account: account, app: app, guid: guid, pricing: "GAME")
+        }
+    }
+
+    private func purchaseWithParams(account: AppStoreAccount, app: AppStoreApp,
+                                     guid: String, pricing: String) async throws {
+        let url = buyURL(pod: account.pod, path: purchasePath)
+        let payload = PlistPayload.buildPurchasePayload(
+            appID: app.id, guid: guid, pricingParameters: pricing
+        )
+        let body = try PlistPayload.encode(payload)
+
+        var request = URLRequest(url: URL(string: url)!)
+        request.httpMethod = "POST"
+        request.setValue("application/x-apple-plist", forHTTPHeaderField: "Content-Type")
+        request.setValue(account.directoryServicesID, forHTTPHeaderField: "iCloud-DSID")
+        request.setValue(account.directoryServicesID, forHTTPHeaderField: "X-Dsid")
+        request.setValue(account.storeFront, forHTTPHeaderField: "X-Apple-Store-Front")
+        request.setValue(account.passwordToken, forHTTPHeaderField: "X-Token")
+        request.httpBody = body
+
+        let (data, _) = try await session.data(for: request)
+        let plist = try PlistPayload.decode(data)
+
+        let failureType = plist["failureType"] as? String ?? ""
+        let customerMessage = plist["customerMessage"] as? String ?? ""
+
+        if failureType == failureTempUnavailable {
+            throw AppStoreError.purchaseFailed("temporarily unavailable")
+        }
+        if customerMessage == customerMessageSubscription {
+            throw AppStoreError.purchaseFailed("subscription required")
+        }
+        if failureType == failureTokenExpired || failureType == failureSignInRequired
+            || failureType == failureDeviceVerification
+            || customerMessage == customerMessagePasswordChanged {
+            throw AppStoreError.tokenExpired
+        }
+        if failureType == failureLicenseExists {
+            return
+        }
+        if !failureType.isEmpty {
+            let msg = customerMessage.isEmpty ? "something went wrong" : customerMessage
+            throw AppStoreError.purchaseFailed(msg)
+        }
+
+        let docType = plist["jingleDocType"] as? String ?? ""
+        let status = plist["status"] as? Int ?? -1
+        if docType != "purchaseSuccess" || status != 0 {
+            throw AppStoreError.purchaseFailed("unexpected response")
+        }
+    }
 }
