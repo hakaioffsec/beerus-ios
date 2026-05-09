@@ -1,3 +1,4 @@
+import Compression
 import Foundation
 import UIKit
 
@@ -371,6 +372,391 @@ final class AppStoreService {
         let status = plist["status"] as? Int ?? -1
         if docType != "purchaseSuccess" || status != 0 {
             throw AppStoreError.purchaseFailed("unexpected response")
+        }
+    }
+
+    // MARK: - Download
+
+    func download(app: AppStoreApp, externalVersionID: String? = nil,
+                  progress: ((Int64, Int64) -> Void)? = nil) async throws -> DownloadResult {
+        let account = try accountInfo()
+        let guid = getGUID()
+
+        let item = try await fetchDownloadItem(
+            account: account, appID: app.id, guid: guid,
+            externalVersionID: externalVersionID
+        )
+
+        let version: String = {
+            if let v = item.metadata["bundleShortVersionString"] { return "\(v)" }
+            return "unknown"
+        }()
+
+        let fileName = "\(app.bundleID)_\(app.id)_\(version).ipa"
+        let ipaDir = "/var/mobile/Documents/BEERUS/IPAs"
+        try FileManager.default.createDirectory(
+            atPath: ipaDir, withIntermediateDirectories: true
+        )
+        let destination = "\(ipaDir)/\(fileName)"
+
+        let tmpPath = destination + ".tmp"
+        try await downloadFile(from: item.url, to: tmpPath, progress: progress)
+
+        try IPAProcessor.applyPatches(
+            metadata: item.metadata,
+            account: account,
+            sinfs: item.sinfs,
+            sourcePath: tmpPath,
+            destinationPath: destination
+        )
+
+        try? FileManager.default.removeItem(atPath: tmpPath)
+
+        return DownloadResult(destinationPath: destination, sinfs: item.sinfs)
+    }
+
+    private func fetchDownloadItem(account: AppStoreAccount, appID: Int64,
+                                    guid: String, externalVersionID: String?) async throws -> DownloadItemResult {
+        let url = buyURL(pod: account.pod, path: downloadPath, guid: guid)
+        let payload = PlistPayload.buildDownloadPayload(
+            appID: appID, guid: guid, externalVersionID: externalVersionID
+        )
+        let body = try PlistPayload.encode(payload)
+
+        var request = URLRequest(url: URL(string: url)!)
+        request.httpMethod = "POST"
+        request.setValue("application/x-apple-plist", forHTTPHeaderField: "Content-Type")
+        request.setValue(account.directoryServicesID, forHTTPHeaderField: "iCloud-DSID")
+        request.setValue(account.directoryServicesID, forHTTPHeaderField: "X-Dsid")
+        request.httpBody = body
+
+        let (data, _) = try await session.data(for: request)
+        let plist = try PlistPayload.decode(data)
+
+        let failureType = plist["failureType"] as? String ?? ""
+        let customerMessage = plist["customerMessage"] as? String ?? ""
+
+        if failureType == failureTokenExpired || failureType == failureSignInRequired
+            || failureType == failureDeviceVerification || failureType == failureLicenseExists {
+            throw AppStoreError.tokenExpired
+        }
+        if failureType == failureLicenseNotFound {
+            throw AppStoreError.licenseRequired
+        }
+        if !failureType.isEmpty {
+            let msg = customerMessage.isEmpty ? failureType : customerMessage
+            throw AppStoreError.downloadFailed(msg)
+        }
+
+        guard let items = plist["songList"] as? [[String: Any]], let first = items.first,
+              let downloadURL = first["URL"] as? String else {
+            throw AppStoreError.downloadFailed("invalid response")
+        }
+
+        let sinfs: [SinfData] = (first["sinfs"] as? [[String: Any]] ?? []).compactMap { dict in
+            guard let id = dict["id"] as? Int64 ?? (dict["id"] as? Int).map(Int64.init),
+                  let data = dict["sinf"] as? Data else { return nil }
+            return SinfData(id: id, data: data)
+        }
+
+        let metadata = first["metadata"] as? [String: Any] ?? [:]
+
+        return DownloadItemResult(url: downloadURL, sinfs: sinfs, metadata: metadata)
+    }
+
+    private func downloadFile(from urlString: String, to path: String,
+                               progress: ((Int64, Int64) -> Void)?) async throws {
+        let url = URL(string: urlString)!
+        let (asyncBytes, response) = try await session.bytes(from: url)
+
+        guard let http = response as? HTTPURLResponse,
+              (200...299).contains(http.statusCode) else {
+            throw AppStoreError.downloadFailed("download request failed")
+        }
+
+        let totalBytes = http.expectedContentLength
+        let fileURL = URL(fileURLWithPath: path)
+        FileManager.default.createFile(atPath: path, contents: nil)
+        let handle = try FileHandle(forWritingTo: fileURL)
+        defer { handle.closeFile() }
+
+        var downloaded: Int64 = 0
+        let bufferSize = 65536
+        var buffer = Data()
+        buffer.reserveCapacity(bufferSize)
+
+        for try await byte in asyncBytes {
+            buffer.append(byte)
+            if buffer.count >= bufferSize {
+                handle.write(buffer)
+                downloaded += Int64(buffer.count)
+                buffer.removeAll(keepingCapacity: true)
+                progress?(downloaded, totalBytes)
+            }
+        }
+
+        if !buffer.isEmpty {
+            handle.write(buffer)
+            downloaded += Int64(buffer.count)
+            progress?(downloaded, totalBytes)
+        }
+    }
+
+    // MARK: - List Versions
+
+    func listVersions(app: AppStoreApp) async throws -> VersionListResult {
+        let account = try accountInfo()
+        let guid = getGUID()
+
+        let item = try await fetchDownloadItem(
+            account: account, appID: app.id, guid: guid, externalVersionID: nil
+        )
+
+        guard let rawIDs = item.metadata["softwareVersionExternalIdentifiers"] as? [Any] else {
+            throw AppStoreError.versionsFailed("no version identifiers in metadata")
+        }
+
+        let identifiers = rawIDs.map { "\($0)" }
+
+        guard let latestID = item.metadata["softwareVersionExternalIdentifier"] else {
+            throw AppStoreError.versionsFailed("no latest version in metadata")
+        }
+
+        return VersionListResult(identifiers: identifiers, latestID: "\(latestID)")
+    }
+
+    // MARK: - Get Version Metadata (partial ZIP read)
+
+    func getVersionMetadata(app: AppStoreApp, versionID: String) async throws -> VersionMetadata {
+        let account = try accountInfo()
+        let guid = getGUID()
+
+        let item = try await fetchDownloadItem(
+            account: account, appID: app.id, guid: guid, externalVersionID: versionID
+        )
+
+        return try await readVersionMetadataFromRemoteIPA(url: item.url)
+    }
+
+    private func readVersionMetadataFromRemoteIPA(url urlString: String) async throws -> VersionMetadata {
+        let url = URL(string: urlString)!
+
+        var sizeReq = URLRequest(url: url)
+        sizeReq.httpMethod = "GET"
+        sizeReq.setValue("identity", forHTTPHeaderField: "Accept-Encoding")
+        sizeReq.setValue("bytes=0-0", forHTTPHeaderField: "Range")
+
+        let (_, sizeResp) = try await session.data(for: sizeReq)
+        guard let http = sizeResp as? HTTPURLResponse, http.statusCode == 206,
+              let rangeHeader = http.value(forHTTPHeaderField: "Content-Range"),
+              let totalSize = parseContentRangeSize(rangeHeader) else {
+            throw AppStoreError.metadataFailed("cannot determine remote file size")
+        }
+
+        let tailSize: Int64 = min(65536, totalSize)
+        let tailStart = totalSize - tailSize
+
+        var tailReq = URLRequest(url: url)
+        tailReq.httpMethod = "GET"
+        tailReq.setValue("identity", forHTTPHeaderField: "Accept-Encoding")
+        tailReq.setValue("bytes=\(tailStart)-\(totalSize - 1)", forHTTPHeaderField: "Range")
+
+        let (tailData, tailResp) = try await session.data(for: tailReq)
+        guard let tailHTTP = tailResp as? HTTPURLResponse, tailHTTP.statusCode == 206 else {
+            throw AppStoreError.metadataFailed("failed to read ZIP tail")
+        }
+
+        guard let cdInfo = findCentralDirectory(in: tailData, tailOffset: tailStart) else {
+            throw AppStoreError.metadataFailed("cannot find ZIP central directory")
+        }
+
+        var cdReq = URLRequest(url: url)
+        cdReq.httpMethod = "GET"
+        cdReq.setValue("identity", forHTTPHeaderField: "Accept-Encoding")
+        cdReq.setValue("bytes=\(cdInfo.offset)-\(cdInfo.offset + cdInfo.size - 1)", forHTTPHeaderField: "Range")
+
+        let (cdData, cdResp) = try await session.data(for: cdReq)
+        guard let cdHTTP = cdResp as? HTTPURLResponse, cdHTTP.statusCode == 206 else {
+            throw AppStoreError.metadataFailed("failed to read central directory")
+        }
+
+        guard let plistEntry = findInfoPlistEntry(in: cdData) else {
+            throw AppStoreError.metadataFailed("Info.plist not found in ZIP")
+        }
+
+        let readEnd = plistEntry.localHeaderOffset + Int64(30 + plistEntry.nameLength + plistEntry.compressedSize + 1024)
+        var plistReq = URLRequest(url: url)
+        plistReq.httpMethod = "GET"
+        plistReq.setValue("identity", forHTTPHeaderField: "Accept-Encoding")
+        plistReq.setValue("bytes=\(plistEntry.localHeaderOffset)-\(min(readEnd, totalSize - 1))", forHTTPHeaderField: "Range")
+
+        let (plistData, plistResp) = try await session.data(for: plistReq)
+        guard let plistHTTP = plistResp as? HTTPURLResponse, plistHTTP.statusCode == 206 else {
+            throw AppStoreError.metadataFailed("failed to read Info.plist data")
+        }
+
+        guard plistData.count > 30 else {
+            throw AppStoreError.metadataFailed("Info.plist data too small")
+        }
+
+        let localNameLen = Int(plistData[26]) | (Int(plistData[27]) << 8)
+        let localExtraLen = Int(plistData[28]) | (Int(plistData[29]) << 8)
+        let dataStart = 30 + localNameLen + localExtraLen
+
+        guard dataStart + plistEntry.compressedSize <= plistData.count else {
+            throw AppStoreError.metadataFailed("Info.plist data truncated")
+        }
+
+        let rawPlistData = plistData.subdata(in: dataStart..<(dataStart + plistEntry.compressedSize))
+
+        let infoPlistBytes: Data
+        if plistEntry.method == 8 {
+            guard let decompressed = rawPlistData.decompress() else {
+                throw AppStoreError.metadataFailed("failed to decompress Info.plist")
+            }
+            infoPlistBytes = decompressed
+        } else {
+            infoPlistBytes = rawPlistData
+        }
+
+        guard let infoDict = try? PropertyListSerialization.propertyList(
+            from: infoPlistBytes, options: [], format: nil
+        ) as? [String: Any] else {
+            throw AppStoreError.metadataFailed("failed to parse Info.plist")
+        }
+
+        let displayVersion: String = {
+            for key in ["CFBundleShortVersionString", "bundleShortVersionString"] {
+                if let v = infoDict[key] as? String, !v.isEmpty { return v }
+            }
+            return "unknown"
+        }()
+
+        let releaseDate: Date = {
+            for key in ["releaseDate", "ReleaseDate"] {
+                if let d = infoDict[key] as? Date { return d }
+                if let s = infoDict[key] as? String {
+                    for fmt in ["yyyy-MM-dd'T'HH:mm:ssZ", "yyyy-MM-dd"] {
+                        let df = DateFormatter()
+                        df.dateFormat = fmt
+                        if let d = df.date(from: s) { return d }
+                    }
+                }
+            }
+            return Date()
+        }()
+
+        return VersionMetadata(displayVersion: displayVersion, releaseDate: releaseDate)
+    }
+
+    // MARK: - ZIP Helpers
+
+    private func parseContentRangeSize(_ header: String) -> Int64? {
+        guard let slashIndex = header.lastIndex(of: "/") else { return nil }
+        let sizeStr = header[header.index(after: slashIndex)...]
+        return Int64(sizeStr)
+    }
+
+    private struct CentralDirectoryInfo {
+        let offset: Int64
+        let size: Int64
+    }
+
+    private func findCentralDirectory(in tailData: Data, tailOffset: Int64) -> CentralDirectoryInfo? {
+        let sig: [UInt8] = [0x50, 0x4b, 0x05, 0x06]
+        for i in stride(from: tailData.count - 22, through: 0, by: -1) {
+            if tailData[i] == sig[0] && tailData[i+1] == sig[1]
+                && tailData[i+2] == sig[2] && tailData[i+3] == sig[3] {
+                let cdSize = Int64(tailData[i+12]) | (Int64(tailData[i+13]) << 8)
+                    | (Int64(tailData[i+14]) << 16) | (Int64(tailData[i+15]) << 24)
+                let cdOffset = Int64(tailData[i+16]) | (Int64(tailData[i+17]) << 8)
+                    | (Int64(tailData[i+18]) << 16) | (Int64(tailData[i+19]) << 24)
+                return CentralDirectoryInfo(offset: cdOffset, size: cdSize)
+            }
+        }
+        return nil
+    }
+
+    private struct ZipEntryInfo {
+        let localHeaderOffset: Int64
+        let compressedSize: Int
+        let method: UInt16
+        let nameLength: Int
+    }
+
+    private func findInfoPlistEntry(in cdData: Data) -> ZipEntryInfo? {
+        var pos = 0
+        while pos + 46 <= cdData.count {
+            guard cdData[pos] == 0x50, cdData[pos+1] == 0x4b,
+                  cdData[pos+2] == 0x01, cdData[pos+3] == 0x02 else { break }
+
+            let method = UInt16(cdData[pos+10]) | (UInt16(cdData[pos+11]) << 8)
+            let compSize = Int(cdData[pos+20]) | (Int(cdData[pos+21]) << 8)
+                | (Int(cdData[pos+22]) << 16) | (Int(cdData[pos+23]) << 24)
+            let nameLen = Int(cdData[pos+28]) | (Int(cdData[pos+29]) << 8)
+            let extraLen = Int(cdData[pos+30]) | (Int(cdData[pos+31]) << 8)
+            let commentLen = Int(cdData[pos+32]) | (Int(cdData[pos+33]) << 8)
+            let localOffset = Int64(cdData[pos+42]) | (Int64(cdData[pos+43]) << 8)
+                | (Int64(cdData[pos+44]) << 16) | (Int64(cdData[pos+45]) << 24)
+
+            let nameStart = pos + 46
+            guard nameStart + nameLen <= cdData.count else { break }
+            let nameData = cdData.subdata(in: nameStart..<(nameStart + nameLen))
+            let name = String(data: nameData, encoding: .utf8) ?? ""
+
+            let parts = name.split(separator: "/")
+            if parts.count == 3 && parts[0] == "Payload"
+                && parts[1].hasSuffix(".app") && parts[2] == "Info.plist" {
+                return ZipEntryInfo(
+                    localHeaderOffset: localOffset,
+                    compressedSize: compSize,
+                    method: method,
+                    nameLength: nameLen
+                )
+            }
+
+            pos = nameStart + nameLen + extraLen + commentLen
+        }
+        return nil
+    }
+}
+
+extension Data {
+    func decompress() -> Data? {
+        guard !isEmpty else { return nil }
+        let bufferSize = count * 4
+        var result = Data()
+        return withUnsafeBytes { srcBuffer -> Data? in
+            guard let srcPtr = srcBuffer.baseAddress?.assumingMemoryBound(to: UInt8.self) else {
+                return nil
+            }
+            let dstBuffer = UnsafeMutablePointer<UInt8>.allocate(capacity: bufferSize)
+            defer { dstBuffer.deallocate() }
+
+            var stream = compression_stream()
+            guard compression_stream_init(&stream, COMPRESSION_STREAM_DECODE, COMPRESSION_ZLIB) == COMPRESSION_STATUS_OK else {
+                return nil
+            }
+            defer { compression_stream_destroy(&stream) }
+
+            stream.src_ptr = srcPtr
+            stream.src_size = count
+            stream.dst_ptr = dstBuffer
+            stream.dst_size = bufferSize
+
+            while true {
+                let status = compression_stream_process(&stream, Int32(COMPRESSION_STREAM_FINALIZE.rawValue))
+                let produced = bufferSize - stream.dst_size
+                if produced > 0 {
+                    result.append(dstBuffer, count: produced)
+                }
+                if status == COMPRESSION_STATUS_END { break }
+                if status == COMPRESSION_STATUS_ERROR { return nil }
+                stream.dst_ptr = dstBuffer
+                stream.dst_size = bufferSize
+            }
+
+            return result
         }
     }
 }
