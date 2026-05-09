@@ -1,0 +1,158 @@
+<h2>App Store Module — Fluxo de Navegação</h2>
+<p class="subtitle">5 telas principais. Navegação linear com atalhos.</p>
+
+<div style="display:flex;gap:18px;flex-wrap:wrap;justify-content:center;margin:32px 0;">
+
+  <!-- Screen 1: Login -->
+  <div style="width:220px;border:2px solid #444;border-radius:16px;padding:16px;background:#1a1a1a;">
+    <div style="text-align:center;font-size:11px;color:#888;margin-bottom:12px;">① LOGIN</div>
+    <div style="background:#111;border-radius:8px;padding:12px;margin-bottom:8px;">
+      <div style="font-size:10px;color:#666;margin-bottom:4px;">Apple ID</div>
+      <div style="background:#222;border-radius:4px;padding:6px;font-size:11px;color:#555;">email@icloud.com</div>
+    </div>
+    <div style="background:#111;border-radius:8px;padding:12px;margin-bottom:8px;">
+      <div style="font-size:10px;color:#666;margin-bottom:4px;">Password</div>
+      <div style="background:#222;border-radius:4px;padding:6px;font-size:11px;color:#555;">••••••••</div>
+    </div>
+    <div style="background:#111;border-radius:8px;padding:12px;margin-bottom:12px;display:none;" id="2fa-field">
+      <div style="font-size:10px;color:#666;margin-bottom:4px;">2FA Code</div>
+      <div style="background:#222;border-radius:4px;padding:6px;font-size:11px;color:#555;">______</div>
+    </div>
+    <div style="background:#c0392b;border-radius:8px;padding:8px;text-align:center;font-size:12px;font-weight:bold;color:white;">Sign In</div>
+    <div style="text-align:center;font-size:9px;color:#555;margin-top:8px;">Supports 2FA</div>
+  </div>
+
+  <!-- Arrow -->
+  <div style="display:flex;align-items:center;color:#c0392b;font-size:24px;">→</div>
+
+  <!-- Screen 2: Search -->
+  <div style="width:220px;border:2px solid #444;border-radius:16px;padding:16px;background:#1a1a1a;">
+    <div style="text-align:center;font-size:11px;color:#888;margin-bottom:12px;">② SEARCH</div>
+    <div style="display:flex;gap:6px;margin-bottom:12px;">
+      <div style="flex:1;background:#222;border-radius:6px;padding:8px;font-size:11px;color:#555;">Search apps...</div>
+      <div style="background:#c0392b;border-radius:6px;padding:8px;font-size:10px;color:white;">🔍</div>
+    </div>
+    <div style="font-size:10px;color:#666;margin-bottom:6px;">Account: user@icloud.com ✓</div>
+    <div style="border-top:1px solid #333;padding-top:8px;">
+      <div style="display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid #222;">
+        <div style="width:32px;height:32px;background:#333;border-radius:8px;"></div>
+        <div><div style="font-size:11px;color:#ddd;">WhatsApp</div><div style="font-size:9px;color:#666;">net.whatsapp.WhatsApp</div></div>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid #222;">
+        <div style="width:32px;height:32px;background:#333;border-radius:8px;"></div>
+        <div><div style="font-size:11px;color:#ddd;">Telegram</div><div style="font-size:9px;color:#666;">ph.telegra.Telegraph</div></div>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;padding:6px 0;">
+        <div style="width:32px;height:32px;background:#333;border-radius:8px;"></div>
+        <div><div style="font-size:11px;color:#ddd;">Signal</div><div style="font-size:9px;color:#666;">org.whispersystems.signal</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Arrow -->
+  <div style="display:flex;align-items:center;color:#c0392b;font-size:24px;">→</div>
+
+  <!-- Screen 3: App Detail -->
+  <div style="width:220px;border:2px solid #444;border-radius:16px;padding:16px;background:#1a1a1a;">
+    <div style="text-align:center;font-size:11px;color:#888;margin-bottom:12px;">③ APP DETAIL</div>
+    <div style="display:flex;gap:10px;align-items:center;margin-bottom:12px;">
+      <div style="width:48px;height:48px;background:#333;border-radius:12px;"></div>
+      <div>
+        <div style="font-size:13px;color:#ddd;font-weight:bold;">WhatsApp</div>
+        <div style="font-size:9px;color:#666;">net.whatsapp.WhatsApp</div>
+        <div style="font-size:9px;color:#888;">v24.10.80 • Free</div>
+      </div>
+    </div>
+    <div style="background:#c0392b;border-radius:8px;padding:8px;text-align:center;font-size:12px;font-weight:bold;color:white;margin-bottom:8px;">Download Latest</div>
+    <div style="background:#333;border-radius:8px;padding:8px;text-align:center;font-size:11px;color:#aaa;margin-bottom:12px;">View All Versions</div>
+    <div style="border-top:1px solid #333;padding-top:8px;">
+      <div style="font-size:10px;color:#666;">App ID: 310633997</div>
+      <div style="font-size:10px;color:#666;">Price: Free</div>
+    </div>
+  </div>
+</div>
+
+<!-- Second row -->
+<div style="display:flex;gap:18px;flex-wrap:wrap;justify-content:center;margin:24px 0;">
+
+  <!-- Screen 4: Version List -->
+  <div style="width:220px;border:2px solid #444;border-radius:16px;padding:16px;background:#1a1a1a;">
+    <div style="text-align:center;font-size:11px;color:#888;margin-bottom:12px;">④ VERSIONS</div>
+    <div style="font-size:12px;color:#ddd;font-weight:bold;margin-bottom:8px;">WhatsApp — Versions</div>
+    <div style="font-size:9px;color:#888;margin-bottom:12px;">Latest: v24.10.80</div>
+
+    <div style="border-bottom:1px solid #222;padding:8px 0;">
+      <div style="display:flex;justify-content:space-between;">
+        <div><div style="font-size:11px;color:#ddd;">v24.10.80</div><div style="font-size:9px;color:#666;">2024-05-01 • Latest</div></div>
+        <div style="background:#c0392b;border-radius:4px;padding:4px 8px;font-size:9px;color:white;height:fit-content;">GET</div>
+      </div>
+    </div>
+    <div style="border-bottom:1px solid #222;padding:8px 0;">
+      <div style="display:flex;justify-content:space-between;">
+        <div><div style="font-size:11px;color:#ddd;">v24.9.72</div><div style="font-size:9px;color:#666;">2024-04-15</div></div>
+        <div style="background:#333;border-radius:4px;padding:4px 8px;font-size:9px;color:#aaa;height:fit-content;">GET</div>
+      </div>
+    </div>
+    <div style="border-bottom:1px solid #222;padding:8px 0;">
+      <div style="display:flex;justify-content:space-between;">
+        <div><div style="font-size:11px;color:#ddd;">v24.8.60</div><div style="font-size:9px;color:#666;">2024-03-28</div></div>
+        <div style="background:#333;border-radius:4px;padding:4px 8px;font-size:9px;color:#aaa;height:fit-content;">GET</div>
+      </div>
+    </div>
+    <div style="padding:8px 0;">
+      <div style="display:flex;justify-content:space-between;">
+        <div><div style="font-size:11px;color:#ddd;">v24.7.55</div><div style="font-size:9px;color:#666;">2024-03-10</div></div>
+        <div style="background:#333;border-radius:4px;padding:4px 8px;font-size:9px;color:#aaa;height:fit-content;">GET</div>
+      </div>
+    </div>
+    <div style="text-align:center;font-size:9px;color:#555;margin-top:8px;">Scroll for more versions</div>
+  </div>
+
+  <!-- Arrow -->
+  <div style="display:flex;align-items:center;color:#c0392b;font-size:24px;">→</div>
+
+  <!-- Screen 5: Download Progress -->
+  <div style="width:220px;border:2px solid #444;border-radius:16px;padding:16px;background:#1a1a1a;">
+    <div style="text-align:center;font-size:11px;color:#888;margin-bottom:12px;">⑤ DOWNLOAD</div>
+    <div style="display:flex;gap:10px;align-items:center;margin-bottom:16px;">
+      <div style="width:40px;height:40px;background:#333;border-radius:10px;"></div>
+      <div>
+        <div style="font-size:12px;color:#ddd;font-weight:bold;">WhatsApp</div>
+        <div style="font-size:9px;color:#888;">v24.10.80</div>
+      </div>
+    </div>
+
+    <div style="margin-bottom:6px;font-size:10px;color:#888;">Downloading... 67%</div>
+    <div style="background:#333;border-radius:4px;height:6px;margin-bottom:4px;">
+      <div style="background:#c0392b;border-radius:4px;height:6px;width:67%;"></div>
+    </div>
+    <div style="font-size:9px;color:#555;margin-bottom:16px;">142 MB / 212 MB</div>
+
+    <div style="font-size:10px;color:#666;margin-bottom:4px;">Steps:</div>
+    <div style="font-size:10px;color:#4CAF50;">✓ License acquired</div>
+    <div style="font-size:10px;color:#4CAF50;">✓ Sinf replicated</div>
+    <div style="font-size:10px;color:#c0392b;">⏳ Downloading IPA...</div>
+    <div style="font-size:10px;color:#555;">○ Patching metadata</div>
+    <div style="font-size:10px;color:#555;">○ Ready</div>
+
+    <div style="margin-top:16px;border-top:1px solid #333;padding-top:12px;">
+      <div style="font-size:9px;color:#666;margin-bottom:8px;">After download:</div>
+      <div style="display:flex;gap:6px;">
+        <div style="flex:1;background:#333;border-radius:6px;padding:6px;text-align:center;font-size:9px;color:#aaa;">Install</div>
+        <div style="flex:1;background:#333;border-radius:6px;padding:6px;text-align:center;font-size:9px;color:#aaa;">Share</div>
+        <div style="flex:1;background:#333;border-radius:6px;padding:6px;text-align:center;font-size:9px;color:#aaa;">Files</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div style="margin-top:24px;padding:16px;background:#111;border-radius:8px;border:1px solid #333;">
+  <h3 style="margin:0 0 8px;">Navigation Flow</h3>
+  <div style="font-size:12px;color:#aaa;line-height:1.8;">
+    <strong style="color:#c0392b;">Side Menu</strong> → App Store → <strong>②Search</strong> (if logged in) or <strong>①Login</strong> (if not)<br>
+    <strong>②Search</strong> → tap app → <strong>③Detail</strong><br>
+    <strong>③Detail</strong> → "Download Latest" → <strong>⑤Download</strong><br>
+    <strong>③Detail</strong> → "View All Versions" → <strong>④Versions</strong> → tap GET → <strong>⑤Download</strong><br>
+    <strong>⑤Download</strong> complete → Install / Share / Open in Files
+  </div>
+</div>

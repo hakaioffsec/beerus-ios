@@ -724,39 +724,18 @@ final class AppStoreService {
 extension Data {
     func decompress() -> Data? {
         guard !isEmpty else { return nil }
-        let bufferSize = count * 4
-        var result = Data()
-        return withUnsafeBytes { srcBuffer -> Data? in
-            guard let srcPtr = srcBuffer.baseAddress?.assumingMemoryBound(to: UInt8.self) else {
-                return nil
-            }
-            let dstBuffer = UnsafeMutablePointer<UInt8>.allocate(capacity: bufferSize)
-            defer { dstBuffer.deallocate() }
+        let decompressed = self as NSData
+        let bufferSize = count * 8
+        let dstBuffer = UnsafeMutablePointer<UInt8>.allocate(capacity: bufferSize)
+        defer { dstBuffer.deallocate() }
 
-            var stream = compression_stream()
-            guard compression_stream_init(&stream, COMPRESSION_STREAM_DECODE, COMPRESSION_ZLIB) == COMPRESSION_STATUS_OK else {
-                return nil
-            }
-            defer { compression_stream_destroy(&stream) }
+        let decompressedSize = compression_decode_buffer(
+            dstBuffer, bufferSize,
+            (self as NSData).bytes.assumingMemoryBound(to: UInt8.self), count,
+            nil, COMPRESSION_ZLIB
+        )
 
-            stream.src_ptr = srcPtr
-            stream.src_size = count
-            stream.dst_ptr = dstBuffer
-            stream.dst_size = bufferSize
-
-            while true {
-                let status = compression_stream_process(&stream, Int32(COMPRESSION_STREAM_FINALIZE.rawValue))
-                let produced = bufferSize - stream.dst_size
-                if produced > 0 {
-                    result.append(dstBuffer, count: produced)
-                }
-                if status == COMPRESSION_STATUS_END { break }
-                if status == COMPRESSION_STATUS_ERROR { return nil }
-                stream.dst_ptr = dstBuffer
-                stream.dst_size = bufferSize
-            }
-
-            return result
-        }
+        guard decompressedSize > 0 else { return nil }
+        return Data(bytes: dstBuffer, count: decompressedSize)
     }
 }

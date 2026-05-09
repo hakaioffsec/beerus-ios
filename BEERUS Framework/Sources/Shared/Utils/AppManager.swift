@@ -15,11 +15,7 @@ class AppManager {
         var result: [String: AppInfo] = [:]
 
         guard let appUUIDs = try? fileManager.contentsOfDirectory(atPath: appDirectory) else {
-<<<<<<< HEAD
-            print("Erro ao acessar o diretório de aplicativos.")
-=======
             print("Failed to access app directory.")
->>>>>>> ae68300 (feat: add script editor, and frida integration)
             return result
         }
 
