@@ -159,6 +159,7 @@ private final class DownloadDelegate: NSObject, URLSessionDownloadDelegate {
     private let expectedSize: Int64
     private let progressHandler: (Double) -> Void
     private let completionHandler: (Result<String, Error>) -> Void
+    private let logFile = "/var/tmp/beerus-frida-download.log"
 
     init(expectedSize: Int64,
          progress: @escaping (Double) -> Void,
@@ -166,21 +167,86 @@ private final class DownloadDelegate: NSObject, URLSessionDownloadDelegate {
         self.expectedSize = expectedSize
         self.progressHandler = progress
         self.completionHandler = completion
+        super.init()
+        log("Download delegate initialized, expected size: \(expectedSize)")
+    }
+
+    private func log(_ msg: String) {
+        let ts = ISO8601DateFormatter().string(from: Date())
+        let line = "[\(ts)] \(msg)\n"
+        NSLog("[FridaDownload] %@", msg)
+        if let data = line.data(using: .utf8) {
+            if FileManager.default.fileExists(atPath: logFile) {
+                if let handle = FileHandle(forWritingAtPath: logFile) {
+                    handle.seekToEndOfFile()
+                    handle.write(data)
+                    handle.closeFile()
+                }
+            } else {
+                try? data.write(to: URL(fileURLWithPath: logFile))
+            }
+        }
     }
 
     func urlSession(_ session: URLSession,
                     downloadTask: URLSessionDownloadTask,
                     didFinishDownloadingTo location: URL) {
-        // Move from temp to a persistent temp location (URLSession deletes the file after this returns)
-        let dest = FileManager.default.temporaryDirectory
-            .appendingPathComponent(downloadTask.response?.suggestedFilename ?? "frida-server.xz")
+        log("didFinishDownloadingTo called, location: \(location.path)")
 
-        try? FileManager.default.removeItem(at: dest)
+        // ponytail: read data into memory IMMEDIATELY before system cleanup
+        let data: Data
         do {
-            try FileManager.default.moveItem(at: location, to: dest)
-            completionHandler(.success(dest.path))
+            data = try Data(contentsOf: location)
+            log("Read \(data.count) bytes into memory")
         } catch {
+            log("ERROR: Failed to read source - \(error.localizedDescription)")
             completionHandler(.failure(error))
+            session.finishTasksAndInvalidate()
+            return
+        }
+
+        // Try multiple locations
+        let destinations = [
+            "/var/root/frida-server.deb",
+            "/var/mobile/Library/frida-server.deb"
+        ]
+
+        var savedPath: String? = nil
+        let fm = FileManager.default
+
+        for destPath in destinations {
+            do {
+                let destDir = (destPath as NSString).deletingLastPathComponent
+                try? fm.createDirectory(atPath: destDir, withIntermediateDirectories: true)
+                try? fm.removeItem(atPath: destPath)
+                try data.write(to: URL(fileURLWithPath: destPath))
+
+                if fm.fileExists(atPath: destPath) {
+                    log("SUCCESS: Wrote \(data.count) bytes to \(destPath)")
+                    savedPath = destPath
+                    break
+                }
+            } catch {
+                log("WARN: Failed \(destPath): \(error.localizedDescription)")
+            }
+        }
+
+        guard let path = savedPath else {
+            log("ERROR: All destinations failed")
+            completionHandler(.failure(NSError(domain: "FridaDownload", code: -1,
+                userInfo: [NSLocalizedDescriptionKey: "Could not save file"])))
+            return
+        }
+
+        // Verify after delay
+        Thread.sleep(forTimeInterval: 0.1)
+        if fm.fileExists(atPath: path) {
+            log("CONFIRMED: File persists at \(path)")
+            completionHandler(.success(path))
+        } else {
+            log("ERROR: File deleted after 100ms")
+            completionHandler(.failure(NSError(domain: "FridaDownload", code: -2,
+                userInfo: [NSLocalizedDescriptionKey: "File deleted by system"])))
         }
         session.finishTasksAndInvalidate()
     }
@@ -192,15 +258,22 @@ private final class DownloadDelegate: NSObject, URLSessionDownloadDelegate {
                     totalBytesExpectedToWrite: Int64) {
         let total = totalBytesExpectedToWrite > 0 ? totalBytesExpectedToWrite : expectedSize
         guard total > 0 else { return }
-        progressHandler(Double(totalBytesWritten) / Double(total))
+        let progress = Double(totalBytesWritten) / Double(total)
+        if Int(progress * 100) % 25 == 0 {
+            log("Progress: \(Int(progress * 100))% (\(totalBytesWritten)/\(total))")
+        }
+        progressHandler(progress)
     }
 
     func urlSession(_ session: URLSession,
                     task: URLSessionTask,
                     didCompleteWithError error: Error?) {
         if let error = error {
+            log("ERROR: didCompleteWithError - \(error.localizedDescription)")
             completionHandler(.failure(error))
             session.finishTasksAndInvalidate()
+        } else {
+            log("didCompleteWithError called with nil error (normal completion)")
         }
     }
 }

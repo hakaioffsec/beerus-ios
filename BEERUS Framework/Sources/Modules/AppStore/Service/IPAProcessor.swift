@@ -11,7 +11,7 @@ enum IPAProcessor {
         let destURL = URL(fileURLWithPath: destinationPath)
         FileManager.default.createFile(atPath: destinationPath, contents: nil)
         let handle = try FileHandle(forWritingTo: destURL)
-        defer { handle.closeFile() }
+        defer { try? handle.close() } // ponytail: closeFile() deprecated
 
         var cdEntries: [CDEntry] = []
 
@@ -53,9 +53,16 @@ enum IPAProcessor {
 
         if !sinfs.isEmpty {
             let bundleName = findBundleName(in: entries)
+            guard !bundleName.isEmpty else {
+                throw AppStoreError.downloadFailed("could not determine app bundle name")
+            }
 
             if let manifest = readManifestPlist(from: entries) {
                 let sinfPaths = manifest["SinfPaths"] as? [String] ?? []
+                // ponytail: guard against array mismatch - mismatched counts = incomplete patching
+                guard sinfs.count == sinfPaths.count else {
+                    throw AppStoreError.downloadFailed("sinf/path count mismatch: \(sinfs.count) sinfs vs \(sinfPaths.count) paths")
+                }
                 for (sinf, path) in zip(sinfs, sinfPaths) {
                     let fullPath = "Payload/\(bundleName).app/\(path)"
                     writeSinfEntry(handle: handle, cdEntries: &cdEntries,
@@ -63,6 +70,9 @@ enum IPAProcessor {
                 }
             } else if let info = readInfoPlist(from: entries) {
                 let execName = info["CFBundleExecutable"] as? String ?? ""
+                guard !execName.isEmpty else {
+                    throw AppStoreError.downloadFailed("could not determine executable name")
+                }
                 let fullPath = "Payload/\(bundleName).app/SC_Info/\(execName).sinf"
                 writeSinfEntry(handle: handle, cdEntries: &cdEntries,
                                path: fullPath, data: sinfs[0].data)
@@ -70,6 +80,10 @@ enum IPAProcessor {
         }
 
         let cdOffset = handle.offsetInFile
+        // ponytail: ZIP64 guard - UInt32 offsets overflow for IPAs > 4GB
+        guard cdOffset <= UInt32.max else {
+            throw AppStoreError.downloadFailed("IPA too large (>4GB) - ZIP64 not supported")
+        }
         for entry in cdEntries {
             handle.write(makeCentralDirEntry(entry))
         }

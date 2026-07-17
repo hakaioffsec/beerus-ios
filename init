@@ -90,9 +90,22 @@ compileDaemon() {
     -O2 -Wall \
     -lproc \
     -framework CoreFoundation \
-    Daemon/BeerusDaemon.c -o Daemon/beerusd
- 
+    Daemon/BeerusDaemon.c Daemon/BeerusInjector.c Daemon/MachOPatcher.c -o Daemon/beerusd
+
     ldid -SDaemon/ent.plist Daemon/beerusd
+}
+
+compileSpawnHook() {
+    SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
+
+    clang -arch arm64 \
+    -isysroot "$SDK" \
+    -miphoneos-version-min=15.0 \
+    -O2 -Wall -Wextra \
+    -shared -dynamiclib \
+    SpawnHook/BeerusSpawnHook.c -o SpawnHook/BeerusSpawnHook.dylib
+
+    ldid -S SpawnHook/BeerusSpawnHook.dylib
 }
 
 newEntFile() {
@@ -105,6 +118,10 @@ cat <<EOF > ent.plist
 	<true/>
 	<key>platform-application</key>
 	<true/>
+	<key>keychain-access-groups</key>
+	<array>
+		<string>io.hakaisecurity.beerus-framework</string>
+	</array>
 	<key>com.apple.private.security.setuid</key>
 	<true/>
 	<key>com.apple.private.security.no-sandbox</key>
@@ -182,11 +199,7 @@ Package: io.hakaisecurity.BEERUS-Framework
 Name: Beerus Framework
 Version: 1.0.0
 Architecture: all
-<<<<<<< HEAD
-Description: teste
-=======
 Description: iOS security testing framework
->>>>>>> ae68300 (feat: add script editor, and frida integration)
 Maintainer: Hakai Security
 Author: Hakai Security
 Section: Applications
@@ -291,7 +304,11 @@ EOF
     
     compileDaemon
     mv Daemon/beerusd ".deb$rootPath/usr/local/bin/beerusd"
-    
+
+    compileSpawnHook
+    mkdir -p ".deb$rootPath/usr/lib"
+    mv SpawnHook/BeerusSpawnHook.dylib ".deb$rootPath/usr/lib/"
+
     dpkg-deb -b .deb "$ProjectName.deb"
     rm -rf .deb
 

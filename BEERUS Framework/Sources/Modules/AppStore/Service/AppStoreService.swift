@@ -6,10 +6,19 @@ final class AppStoreService {
 
     static let shared = AppStoreService()
 
-    private let session: URLSession = {
+    private let userAgent = "Configurator/2.17 (Macintosh; OS X 15.2; 24C5089c) AppleWebKit/0620.1.16.11.6"
+
+    // ponytail: shared cookie storage so auth cookies flow to purchase/download
+    private let sharedCookieStorage = HTTPCookieStorage.shared
+
+    private lazy var session: URLSession = {
         let config = URLSessionConfiguration.default
+        config.httpCookieStorage = sharedCookieStorage
         config.httpCookieAcceptPolicy = .always
         config.httpShouldSetCookies = true
+        config.timeoutIntervalForRequest = 30
+        config.timeoutIntervalForResource = 300
+        config.httpAdditionalHeaders = ["User-Agent": userAgent]
         return URLSession(configuration: config)
     }()
 
@@ -22,6 +31,7 @@ final class AppStoreService {
     private let buyDomain = "buy.itunes.apple.com"
     private let purchasePath = "/WebObjects/MZFinance.woa/wa/buyProduct"
     private let downloadPath = "/WebObjects/MZFinance.woa/wa/volumeStoreDownloadProduct"
+    private let defaultAuthEndpoint = "https://buy.itunes.apple.com/WebObjects/MZFinance.woa/wa/authenticate"
 
     private let failureInvalidCredentials = "-5000"
     private let failureTokenExpired = "2034"
@@ -38,8 +48,10 @@ final class AppStoreService {
     // MARK: - GUID
 
     private func getGUID() -> String {
+        // ponytail: ipatool uses MAC address format (12 uppercase hex chars)
         let uuid = UIDevice.current.identifierForVendor?.uuidString ?? UUID().uuidString
-        return uuid.replacingOccurrences(of: "-", with: "").uppercased()
+        let clean = uuid.replacingOccurrences(of: "-", with: "").uppercased()
+        return String(clean.prefix(12))
     }
 
     // MARK: - Storefront → Country Code
@@ -103,6 +115,7 @@ final class AppStoreService {
     // MARK: - Bag
 
     func fetchBag() async throws -> String {
+        // ponytail: ipatool sends guid param on bag request
         let guid = getGUID()
         let url = URL(string: "https://\(initDomain)/bag.xml?guid=\(guid)")!
 
@@ -115,64 +128,170 @@ final class AppStoreService {
             throw AppStoreError.bagFailed("unexpected status code")
         }
 
-        let plist = try PlistPayload.decode(data)
+        let plistData = extractPlistFromXML(data) ?? data
 
-        guard let urlBag = plist["urlBag"] as? [String: Any],
-              let authEndpoint = urlBag["authenticateAccount"] as? String else {
-            throw AppStoreError.bagFailed("missing authenticateAccount in bag")
+        guard let plist = try? PlistPayload.decode(plistData) else {
+            return defaultAuthEndpoint
         }
 
-        return authEndpoint
+        if let urlBag = plist["urlBag"] as? [String: Any],
+           let authEndpoint = urlBag["authenticateAccount"] as? String,
+           !authEndpoint.isEmpty {
+            return authEndpoint
+        }
+
+        return defaultAuthEndpoint
+    }
+
+    private func extractPlistFromXML(_ data: Data) -> Data? {
+        guard let xml = String(data: data, encoding: .utf8) else { return nil }
+        guard let startRange = xml.range(of: "<plist"),
+              let endRange = xml.range(of: "</plist>") else { return nil }
+        let plistString = String(xml[startRange.lowerBound..<endRange.upperBound])
+        return plistString.data(using: .utf8)
     }
 
     // MARK: - Login
 
+    private lazy var authSession: URLSession = {
+        let config = URLSessionConfiguration.default
+        config.httpCookieStorage = sharedCookieStorage
+        config.httpCookieAcceptPolicy = .always
+        config.httpShouldSetCookies = true
+        config.timeoutIntervalForRequest = 30
+        config.timeoutIntervalForResource = 300
+        config.httpAdditionalHeaders = ["User-Agent": userAgent]
+        let session = URLSession(configuration: config, delegate: AuthRedirectBlocker.shared, delegateQueue: nil)
+        return session
+    }()
+
     func login(email: String, password: String, authCode: String = "") async throws -> AppStoreAccount {
         let guid = getGUID()
-        let endpoint = try await fetchBag()
+        var endpoint = try await fetchBag()
+
+        // ponytail: ipatool requires trailing slash for /native/ auth endpoints
+        if endpoint.contains("/native/") && !endpoint.hasSuffix("/") {
+            endpoint += "/"
+        }
 
         var redirect: String? = nil
         var lastResponse: (data: Data, http: HTTPURLResponse)?
+        var hadInvalidCredentials = false  // ponytail: track if we already got -5000
 
         for attempt in 1...4 {
-            let url: String = redirect ?? endpoint
+            var url: String = redirect ?? endpoint
             redirect = nil
+
+            // ponytail: ipatool requires trailing slash for /native/ auth endpoints
+            if url.contains("/native/") && !url.hasSuffix("/") {
+                url += "/"
+            }
 
             let payload = PlistPayload.buildLoginPayload(
                 email: email, password: password,
                 authCode: authCode, guid: guid, attempt: attempt
             )
-            let body = try PlistPayload.encode(payload)
+            // ponytail: login uses form-urlencoded body, not plist
+            let body = PlistPayload.encodeFormData(payload)
 
-            var request = URLRequest(url: URL(string: url)!)
+            #if DEBUG
+            NSLog("[AppStore] === Login Attempt %d ===", attempt)
+            NSLog("[AppStore] URL: %@", url)
+            NSLog("[AppStore] GUID: %@", guid)
+            NSLog("[AppStore] Payload keys: %@", payload.keys.joined(separator: ", "))
+            #endif
+
+            guard let requestURL = URL(string: url) else {
+                throw AppStoreError.loginFailed("invalid auth URL")
+            }
+            var request = URLRequest(url: requestURL)
             request.httpMethod = "POST"
             request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
             request.httpBody = body
 
-            let (data, response) = try await session.data(for: request)
+            let (data, response) = try await authSession.data(for: request)
             guard let http = response as? HTTPURLResponse else {
                 throw AppStoreError.loginFailed("invalid response")
             }
 
             lastResponse = (data, http)
 
-            if http.statusCode == 302 {
-                guard let location = http.value(forHTTPHeaderField: "location") else {
-                    throw AppStoreError.loginFailed("redirect without location")
+            #if DEBUG
+            NSLog("[AppStore] Status: %d", http.statusCode)
+            NSLog("[AppStore] Headers: %@", http.allHeaderFields)
+            #endif
+            let preview = String(data: data.prefix(500), encoding: .utf8) ?? "(binary \(data.count) bytes)"
+            #if DEBUG
+            NSLog("[AppStore] Body preview: %@", preview)
+            #endif
+
+            if http.statusCode == 302 || http.statusCode == 301 {
+                let location = http.value(forHTTPHeaderField: "Location")
+                    ?? http.value(forHTTPHeaderField: "location")
+                    ?? http.allHeaderFields["Location"] as? String
+                    ?? http.allHeaderFields["location"] as? String
+                #if DEBUG
+                NSLog("[AppStore] Redirect location: %@", location ?? "NIL")
+                #endif
+                guard let loc = location, !loc.isEmpty else {
+                    let headers = http.allHeaderFields.map { "\($0.key): \($0.value)" }.joined(separator: ", ")
+                    throw AppStoreError.loginFailed("redirect \(http.statusCode) without location. Headers: \(headers.prefix(500))")
                 }
-                redirect = location
+                redirect = loc
                 continue
+            }
+
+            if data.isEmpty || http.statusCode >= 500 {
+                throw AppStoreError.loginFailed("HTTP \(http.statusCode): \(preview)")
             }
 
             let plist = try PlistPayload.decode(data)
+            #if DEBUG
+            NSLog("[AppStore] === Plist Response ===")
+            NSLog("[AppStore] Keys: %@", plist.keys.joined(separator: ", "))
+            for (key, value) in plist {
+                let valueStr = String("\(value)".prefix(200))
+                NSLog("[AppStore] %@ = %@", key, valueStr)
+            }
+            #endif
             let failureType = plist["failureType"] as? String ?? ""
             let customerMessage = plist["customerMessage"] as? String ?? ""
+            // ponytail: always log for debugging login issues
+            NSLog("[AppStore] failureType: '%@'", failureType)
+            NSLog("[AppStore] customerMessage: '%@'", customerMessage)
+            NSLog("[AppStore] All keys: %@", plist.keys.joined(separator: ", "))
 
-            if attempt == 1 && failureType == failureInvalidCredentials {
-                continue
+            // ponytail: -5000 = invalid credentials, never retry more than once
+            if failureType == failureInvalidCredentials {
+                hadInvalidCredentials = true
+                if attempt == 1 && authCode.isEmpty {
+                    #if DEBUG
+                    NSLog("[AppStore] Attempt 1 with -5000, retrying...")
+                    #endif
+                    continue
+                }
+                // ponytail: still -5000 on attempt 2+ = wrong password, not MFA
+                throw AppStoreError.loginFailed("Invalid email or password")
             }
 
+            // ponytail: MFA required when Apple returns auth continuation keys
+            let authType = plist["authType"] as? String ?? ""
+            let hasMFAIndicators = authType.lowercased().contains("hsa")
+                || plist["trustedDeviceCount"] != nil
+                || plist["b"] != nil  // SRP protocol
+                || plist["c"] != nil
+                || plist["iteration"] != nil
+
             if failureType.isEmpty && authCode.isEmpty && customerMessage == customerMessageBadLogin {
+                if hadInvalidCredentials {
+                    NSLog("[AppStore] Had -5000 before, this is invalid credentials not MFA")
+                    throw AppStoreError.loginFailed("Invalid email or password")
+                }
+                if !hasMFAIndicators {
+                    NSLog("[AppStore] No MFA indicators (authType='%@'), wrong password", authType)
+                    throw AppStoreError.loginFailed("Invalid email or password")
+                }
+                NSLog("[AppStore] >>> MFA REQUIRED (authType='%@') - throwing authCodeRequired <<<", authType)
                 throw AppStoreError.authCodeRequired
             }
 
@@ -185,9 +304,15 @@ final class AppStoreService {
                 throw AppStoreError.loginFailed(msg)
             }
 
-            guard let passwordToken = plist["passwordToken"] as? String, !passwordToken.isEmpty,
-                  let dsid = plist["dsPersonId"] as? String, !dsid.isEmpty else {
-                throw AppStoreError.loginFailed("missing token or dsid")
+            guard let passwordToken = plist["passwordToken"] as? String, !passwordToken.isEmpty else {
+                throw AppStoreError.loginFailed("missing token")
+            }
+            // ponytail: ipatool uses DirectoryServicesID, some responses use dsPersonId
+            let dsid = (plist["DirectoryServicesID"] as? String)
+                ?? (plist["dsPersonId"] as? String)
+                ?? (plist["directoryServicesIdentifier"] as? String)
+            guard let dsid = dsid, !dsid.isEmpty else {
+                throw AppStoreError.loginFailed("missing dsid")
             }
 
             let accountInfo = plist["accountInfo"] as? [String: Any] ?? [:]
@@ -258,16 +383,27 @@ final class AppStoreService {
             return []
         }
 
+        #if DEBUG
+        // ponytail: log first result's icon URL for debugging gray icons
+        if let first = results.first {
+            NSLog("[AppStore] First result icon URL: %@", (first["artworkUrl100"] as? String) ?? "nil")
+        }
+        #endif
+
         return results.compactMap { dict in
             guard let id = dict["trackId"] as? Int64 ?? (dict["trackId"] as? Int).map(Int64.init),
                   let bundleID = dict["bundleId"] as? String,
                   let name = dict["trackName"] as? String else { return nil }
+            let iconURL = dict["artworkUrl100"] as? String
+                ?? dict["artworkUrl60"] as? String
+                ?? dict["artworkUrl512"] as? String
             return AppStoreApp(
                 id: id,
                 bundleID: bundleID,
                 name: name,
                 version: dict["version"] as? String ?? "",
-                price: dict["price"] as? Double ?? 0
+                price: dict["price"] as? Double ?? (dict["price"] as? Int).map(Double.init) ?? 0,
+                iconURL: iconURL
             )
         }
     }
@@ -305,7 +441,8 @@ final class AppStoreService {
         return AppStoreApp(
             id: id, bundleID: bid, name: name,
             version: first["version"] as? String ?? "",
-            price: first["price"] as? Double ?? 0
+            price: first["price"] as? Double ?? 0,
+            iconURL: first["artworkUrl100"] as? String ?? first["artworkUrl60"] as? String
         )
     }
 
@@ -343,7 +480,14 @@ final class AppStoreService {
         request.setValue(account.passwordToken, forHTTPHeaderField: "X-Token")
         request.httpBody = body
 
-        let (data, _) = try await session.data(for: request)
+        let (data, response) = try await session.data(for: request)
+
+        // ponytail: check status before parsing - redirects/errors return HTML, not plist
+        if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+            let preview = String(data: data.prefix(200), encoding: .utf8) ?? "(binary)"
+            throw AppStoreError.purchaseFailed("HTTP \(http.statusCode): \(preview)")
+        }
+
         let plist = try PlistPayload.decode(data)
 
         let failureType = plist["failureType"] as? String ?? ""
@@ -392,12 +536,15 @@ final class AppStoreService {
             return "unknown"
         }()
 
-        let fileName = "\(app.bundleID)_\(app.id)_\(version).ipa"
-        let ipaDir = "/var/mobile/Documents/BEERUS/IPAs"
-        try FileManager.default.createDirectory(
-            atPath: ipaDir, withIntermediateDirectories: true
-        )
-        let destination = "\(ipaDir)/\(fileName)"
+        // ponytail: sanitize filename - remove chars that break shell commands
+        let safeBundleID = app.bundleID.replacingOccurrences(of: "'", with: "")
+        let safeVersion = version
+            .replacingOccurrences(of: "'", with: "")
+            .replacingOccurrences(of: " ", with: "_")
+            .replacingOccurrences(of: "/", with: "-")
+        let fileName = "\(safeBundleID)_\(app.id)_\(safeVersion).ipa"
+        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+        let destination = docs.appendingPathComponent(fileName).path
 
         let tmpPath = destination + ".tmp"
         try await downloadFile(from: item.url, to: tmpPath, progress: progress)
@@ -427,17 +574,27 @@ final class AppStoreService {
         request.httpMethod = "POST"
         request.setValue("application/x-apple-plist", forHTTPHeaderField: "Content-Type")
         request.setValue(account.directoryServicesID, forHTTPHeaderField: "iCloud-DSID")
+        // ponytail: ipatool requires X-Dsid header for download auth
         request.setValue(account.directoryServicesID, forHTTPHeaderField: "X-Dsid")
+        request.setValue(account.storeFront, forHTTPHeaderField: "X-Apple-Store-Front")
+        request.setValue(account.passwordToken, forHTTPHeaderField: "X-Token")
         request.httpBody = body
 
-        let (data, _) = try await session.data(for: request)
+        let (data, response) = try await session.data(for: request)
+
+        // ponytail: check status before parsing - redirects/errors return HTML, not plist
+        if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+            let preview = String(data: data.prefix(200), encoding: .utf8) ?? "(binary)"
+            throw AppStoreError.downloadFailed("HTTP \(http.statusCode): \(preview)")
+        }
+
         let plist = try PlistPayload.decode(data)
 
         let failureType = plist["failureType"] as? String ?? ""
         let customerMessage = plist["customerMessage"] as? String ?? ""
 
         if failureType == failureTokenExpired || failureType == failureSignInRequired
-            || failureType == failureDeviceVerification || failureType == failureLicenseExists {
+            || failureType == failureDeviceVerification {
             throw AppStoreError.tokenExpired
         }
         if failureType == failureLicenseNotFound {
@@ -466,40 +623,26 @@ final class AppStoreService {
 
     private func downloadFile(from urlString: String, to path: String,
                                progress: ((Int64, Int64) -> Void)?) async throws {
-        let url = URL(string: urlString)!
-        let (asyncBytes, response) = try await session.bytes(from: url)
+        guard let url = URL(string: urlString) else {
+            throw AppStoreError.downloadFailed("invalid download URL")
+        }
+
+        let dlSession = URLSession(configuration: .default)
+        defer { dlSession.finishTasksAndInvalidate() } // ponytail: fix URLSession leak
+        let (tempURL, response) = try await dlSession.download(from: url)
 
         guard let http = response as? HTTPURLResponse,
               (200...299).contains(http.statusCode) else {
             throw AppStoreError.downloadFailed("download request failed")
         }
 
-        let totalBytes = http.expectedContentLength
         let fileURL = URL(fileURLWithPath: path)
-        FileManager.default.createFile(atPath: path, contents: nil)
-        let handle = try FileHandle(forWritingTo: fileURL)
-        defer { handle.closeFile() }
+        try? FileManager.default.removeItem(at: fileURL)
+        try FileManager.default.moveItem(at: tempURL, to: fileURL)
 
-        var downloaded: Int64 = 0
-        let bufferSize = 65536
-        var buffer = Data()
-        buffer.reserveCapacity(bufferSize)
-
-        for try await byte in asyncBytes {
-            buffer.append(byte)
-            if buffer.count >= bufferSize {
-                handle.write(buffer)
-                downloaded += Int64(buffer.count)
-                buffer.removeAll(keepingCapacity: true)
-                progress?(downloaded, totalBytes)
-            }
-        }
-
-        if !buffer.isEmpty {
-            handle.write(buffer)
-            downloaded += Int64(buffer.count)
-            progress?(downloaded, totalBytes)
-        }
+        let totalBytes = http.expectedContentLength
+        let fileSize = (try? FileManager.default.attributesOfItem(atPath: path)[.size] as? Int64) ?? totalBytes
+        progress?(fileSize, fileSize)
     }
 
     // MARK: - List Versions
@@ -539,7 +682,9 @@ final class AppStoreService {
     }
 
     private func readVersionMetadataFromRemoteIPA(url urlString: String) async throws -> VersionMetadata {
-        let url = URL(string: urlString)!
+        guard let url = URL(string: urlString) else {
+            throw AppStoreError.metadataFailed("invalid URL")
+        }
 
         var sizeReq = URLRequest(url: url)
         sizeReq.httpMethod = "GET"
@@ -721,21 +866,23 @@ final class AppStoreService {
     }
 }
 
-extension Data {
-    func decompress() -> Data? {
-        guard !isEmpty else { return nil }
-        let decompressed = self as NSData
-        let bufferSize = count * 8
-        let dstBuffer = UnsafeMutablePointer<UInt8>.allocate(capacity: bufferSize)
-        defer { dstBuffer.deallocate() }
+private final class AuthRedirectBlocker: NSObject, URLSessionTaskDelegate {
+    static let shared = AuthRedirectBlocker()
 
-        let decompressedSize = compression_decode_buffer(
-            dstBuffer, bufferSize,
-            (self as NSData).bytes.assumingMemoryBound(to: UInt8.self), count,
-            nil, COMPRESSION_ZLIB
-        )
-
-        guard decompressedSize > 0 else { return nil }
-        return Data(bytes: dstBuffer, count: decompressedSize)
+    func urlSession(_ session: URLSession, task: URLSessionTask,
+                    willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest,
+                    completionHandler: @escaping (URLRequest?) -> Void) {
+        // ponytail: ipatool blocks redirects when current request Referer equals auth URL
+        // Use currentRequest (the one being redirected FROM), not originalRequest
+        let currentURL = task.currentRequest?.url?.absoluteString ?? ""
+        // Block redirects from auth endpoints (buy.itunes.apple.com auth paths)
+        if currentURL.contains("buy.itunes.apple.com") && currentURL.contains("/wa/authenticate") {
+            completionHandler(nil)
+        } else {
+            completionHandler(request)
+        }
     }
 }
+
+// ponytail: Data.decompress() now in ZipArchive.swift

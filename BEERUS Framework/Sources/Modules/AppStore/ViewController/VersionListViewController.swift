@@ -6,6 +6,7 @@ final class VersionListViewController: BaseViewController {
     private var versionIDs: [String] = []
     private var latestID: String = ""
     private var metadataCache: [String: VersionMetadata] = [:]
+    private var metadataTask: Task<Void, Never>?
 
     init(app: AppStoreApp) {
         self.app = app
@@ -47,13 +48,18 @@ final class VersionListViewController: BaseViewController {
         spinner.startAnimating()
         Task {
             do {
-                let result = try await AppStoreService.shared.listVersions(app: app)
+                let result = try await fetchVersionsWithPurchase()
                 await MainActor.run {
                     spinner.stopAnimating()
                     versionIDs = result.identifiers.reversed()
                     latestID = result.latestID
                     tableView.reloadData()
                     loadMetadataProgressively()
+                }
+            } catch AppStoreError.tokenExpired {
+                await MainActor.run {
+                    spinner.stopAnimating()
+                    handleTokenExpired()
                 }
             } catch {
                 await MainActor.run {
@@ -64,25 +70,78 @@ final class VersionListViewController: BaseViewController {
         }
     }
 
+    private func handleTokenExpired() {
+        AppStoreService.shared.revoke()
+        let alert = UIAlertController(
+            title: "Session Expired",
+            message: "Your login has expired. Please sign in again.",
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(title: "OK", style: .default) { [weak self] _ in
+            guard let self else { return }
+            let nav = self.navigationController
+            let delegate = self.menuDelegate
+            let loginVC = AppStoreLoginViewController()
+            loginVC.menuDelegate = delegate
+            loginVC.onLoginSuccess = { _ in
+                let searchVC = AppStoreSearchViewController()
+                searchVC.menuDelegate = delegate
+                nav?.setViewControllers([searchVC], animated: true)
+            }
+            nav?.setViewControllers([loginVC], animated: true)
+        })
+        present(alert, animated: true)
+    }
+
+    private func fetchVersionsWithPurchase() async throws -> VersionListResult {
+        do {
+            return try await AppStoreService.shared.listVersions(app: app)
+        } catch AppStoreError.licenseRequired {
+            // ponytail: auto-purchase free app to acquire license
+            try await AppStoreService.shared.purchase(app: app)
+            return try await AppStoreService.shared.listVersions(app: app)
+        }
+    }
+
     private func loadMetadataProgressively() {
-        for (index, versionID) in versionIDs.enumerated() {
-            Task {
-                do {
-                    let meta = try await AppStoreService.shared.getVersionMetadata(
-                        app: app, versionID: versionID
-                    )
-                    await MainActor.run {
-                        metadataCache[versionID] = meta
-                        let indexPath = IndexPath(row: index, section: 0)
-                        if tableView.indexPathsForVisibleRows?.contains(indexPath) == true {
-                            tableView.reloadRows(at: [indexPath], with: .none)
+        metadataTask = Task { [weak self] in
+            guard let self else { return }
+            // ponytail: capture app before entering task group to avoid force-unwrap crash
+            let app = self.app
+            let maxConcurrent = 5
+            for batch in stride(from: 0, to: versionIDs.count, by: maxConcurrent) {
+                let end = min(batch + maxConcurrent, versionIDs.count)
+                let slice = Array(versionIDs[batch..<end])
+                await withTaskGroup(of: (Int, String, VersionMetadata?).self) { group in
+                    for (offset, versionID) in slice.enumerated() {
+                        let index = batch + offset
+                        group.addTask {
+                            let meta = try? await AppStoreService.shared.getVersionMetadata(
+                                app: app, versionID: versionID
+                            )
+                            return (index, versionID, meta)
                         }
                     }
-                } catch {
-                    // Metadata load failure is non-fatal — cell stays in loading state
+                    for await (index, versionID, meta) in group {
+                        guard !Task.isCancelled else { return }
+                        guard let meta else { continue }
+                        await MainActor.run { [weak self] in
+                            guard let self else { return }
+                            self.metadataCache[versionID] = meta
+                            let indexPath = IndexPath(row: index, section: 0)
+                            if self.tableView.indexPathsForVisibleRows?.contains(indexPath) == true {
+                                self.tableView.reloadRows(at: [indexPath], with: .none)
+                            }
+                        }
+                    }
                 }
+                if Task.isCancelled { return }
             }
         }
+    }
+
+    deinit {
+        metadataTask?.cancel()
     }
 }
 

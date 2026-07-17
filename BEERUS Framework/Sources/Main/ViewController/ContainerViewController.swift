@@ -21,7 +21,9 @@ final class ContainerViewController: UIViewController {
     private lazy var terminalViewController = TerminalViewController()
     private lazy var plistReaderViewController = PlistReaderViewController()
     private lazy var scriptListViewController = ScriptListViewController()
-    private lazy var appStoreViewController: UIViewController = {
+    private lazy var jailbreakBypassViewController = JailbreakBypassViewController()
+    // ponytail: computed property so it checks auth each time, not lazy
+    private var appStoreViewController: UIViewController {
         if AppStoreCredentialManager.hasStoredAccount {
             let vc = AppStoreSearchViewController()
             vc.menuDelegate = self
@@ -37,7 +39,7 @@ final class ContainerViewController: UIViewController {
             }
             return loginVC
         }
-    }()
+    }
 
     private lazy var sideMenuView: SideMenuView = {
         let menu = SideMenuView()
@@ -93,6 +95,7 @@ extension ContainerViewController: ViewCode {
         terminalViewController.menuDelegate = self
         plistReaderViewController.menuDelegate = self
         scriptListViewController.menuDelegate = self
+        jailbreakBypassViewController.menuDelegate = self
         sideMenuView.delegate = self
     }
 
@@ -190,6 +193,8 @@ extension ContainerViewController: SideMenuViewDelegate {
             show(viewController: scriptListViewController)
         case .appStore:
             show(viewController: appStoreViewController)
+        case .jailbreakBypass:
+            show(viewController: jailbreakBypassViewController)
         }
     }
 

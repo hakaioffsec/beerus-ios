@@ -12,9 +12,38 @@ enum RootExec {
     static func whoami() -> String?             { send("WHOAMI") }
     static func getStatus() -> String?          { send("GET_STATUS") }
     static func restartFrida() -> String?       { send("RESTART_FRIDA") }
+    static func stopFrida() -> String?          { send("STOP_FRIDA") }
     static func installFrida(from path: String) -> String? { send("INSTALL_FRIDA \(path)") }
     static func uninstallFrida() -> String?     { send("UNINSTALL_FRIDA") }
     static func installIPA(path: String) -> String? { send("INSTALL_IPA \(path)") }
+    static func installApp(path: String) -> String? { send("INSTALL_APP \(path)") }
+    static func openApp(_ bundleId: String) -> String? { send("OPEN_APP \(bundleId)") }
+    static func refreshSpringBoard() -> String? { send("REFRESH_SB") }
+
+    // JB Bypass commands
+    static func jbBypassOn() -> String?     { send("JB_BYPASS_ON") }
+    static func jbBypassOff() -> String?    { send("JB_BYPASS_OFF") }
+    static func jbBypassStatus() -> String? { send("JB_BYPASS_STATUS") }
+
+    // Injector commands
+    static func injectorStart() -> String?  { send("INJECT_START") }
+    static func injectorStop() -> String?   { send("INJECT_STOP") }
+    static func injectPid(_ pid: Int) -> String? { send("INJECT_PID \(pid)") }
+    static func injectApp(_ bundleId: String) -> String? { send("INJECT_APP \(bundleId)") }
+    static func injectAll() -> String? { send("INJECT_ALL") }
+    static func injectLaunchd() -> String? { send("INJECT_LAUNCHD") }
+
+    // Binary patching commands
+    static func patchApp(_ bundleId: String) -> String? { send("PATCH_APP \(bundleId)") }
+    static func unpatchApp(_ bundleId: String) -> String? { send("UNPATCH_APP \(bundleId)") }
+
+    // Allowlist commands
+    static func allowlistAdd(_ bundleId: String) -> String? { send("JB_ALLOWLIST_ADD \(bundleId)") }
+    static func allowlistRemove(_ bundleId: String) -> String? { send("JB_ALLOWLIST_REMOVE \(bundleId)") }
+    static func allowlistGet() -> String? { send("JB_ALLOWLIST_GET") }
+
+    // Launch with Cloak - opens app with bypass dylib injected
+    static func launchWithCloak(_ bundleId: String) -> String? { send("JB_LAUNCH_CLOAKED \(bundleId)") }
 
     // MARK: - Shell (streaming)
 
@@ -215,8 +244,13 @@ enum RootExec {
     // MARK: - Private
 
     private static func send(_ msg: String) -> String? {
+        print("[RootExec] send(\(msg)) - sockPath: \(sockPath)")
+
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
-        guard fd >= 0 else { return nil }
+        guard fd >= 0 else {
+            print("[RootExec] socket() failed: \(errno) - \(String(cString: strerror(errno)))")
+            return nil
+        }
         defer { close(fd) }
 
         var addr = sockaddr_un()
@@ -225,18 +259,31 @@ enum RootExec {
             sockPath.withCString { strcpy(ptr, $0) }
         }
 
-        let connected = withUnsafePointer(to: &addr) {
+        let connectResult = withUnsafePointer(to: &addr) {
             $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                connect(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) == 0
+                connect(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
             }
         }
-        guard connected else { return nil }
 
-        _ = msg.withCString { Darwin.send(fd, $0, strlen($0), 0) }
+        if connectResult != 0 {
+            print("[RootExec] connect() failed: \(errno) - \(String(cString: strerror(errno)))")
+            return nil
+        }
+        print("[RootExec] connected to daemon")
+
+        let sentBytes = msg.withCString { Darwin.send(fd, $0, strlen($0), 0) }
+        print("[RootExec] sent \(sentBytes) bytes")
 
         var buf = [CChar](repeating: 0, count: 8192)
-        guard recv(fd, &buf, buf.count - 1, 0) > 0 else { return nil }
-        return String(cString: buf)
+        let recvBytes = recv(fd, &buf, buf.count - 1, 0)
+        guard recvBytes > 0 else {
+            print("[RootExec] recv() failed or empty: \(recvBytes), errno: \(errno)")
+            return nil
+        }
+
+        let response = String(cString: buf)
+        print("[RootExec] recv \(recvBytes) bytes: \(response)")
+        return response
     }
 
 }

@@ -3,6 +3,16 @@ import UIKit
 final class AppStoreSearchViewController: BaseViewController {
 
     private var results: [AppStoreApp] = []
+    private var hasSearched = false  // ponytail: tracks if user searched vs initial empty state
+
+    private lazy var emptyLabel: UILabel = {
+        let label = UILabel()
+        label.text = "No results"
+        label.font = AppFont.regular(16)
+        label.textColor = UIColor(white: 0.4, alpha: 1)
+        label.textAlignment = .center
+        return label
+    }()
 
     private lazy var titleLabel = UILabel.styled(
         text: "App Store", font: AppFont.bold(20), alignment: .center
@@ -67,6 +77,14 @@ final class AppStoreSearchViewController: BaseViewController {
         super.viewDidLoad()
         applyViewCode()
         updateAccountLabel()
+
+        let tap = UITapGestureRecognizer(target: self, action: #selector(dismissKeyboard))
+        tap.cancelsTouchesInView = false
+        view.addGestureRecognizer(tap)
+    }
+
+    @objc private func dismissKeyboard() {
+        view.endEditing(true)
     }
 
     private func updateAccountLabel() {
@@ -82,7 +100,9 @@ final class AppStoreSearchViewController: BaseViewController {
                 let apps = try await AppStoreService.shared.search(term: term)
                 await MainActor.run {
                     spinner.stopAnimating()
+                    hasSearched = true
                     results = apps
+                    tableView.backgroundView = apps.isEmpty ? emptyLabel : nil
                     tableView.reloadData()
                 }
             } catch {
@@ -96,15 +116,16 @@ final class AppStoreSearchViewController: BaseViewController {
 
     @objc private func logoutTapped() {
         AppStoreService.shared.revoke()
+        let nav = navigationController
+        let delegate = menuDelegate
         let loginVC = AppStoreLoginViewController()
-        loginVC.menuDelegate = menuDelegate
-        loginVC.onLoginSuccess = { [weak self] _ in
-            guard let self else { return }
+        loginVC.menuDelegate = delegate
+        loginVC.onLoginSuccess = { _ in
             let searchVC = AppStoreSearchViewController()
-            searchVC.menuDelegate = self.menuDelegate
-            self.navigationController?.setViewControllers([searchVC], animated: true)
+            searchVC.menuDelegate = delegate
+            nav?.setViewControllers([searchVC], animated: true)
         }
-        navigationController?.setViewControllers([loginVC], animated: true)
+        nav?.setViewControllers([loginVC], animated: true)
     }
 }
 

@@ -10,13 +10,56 @@ enum PlistPayload {
         )
     }
 
+    // ponytail: login uses form-urlencoded, not plist
+    // ponytail: RFC 3986 encoding - urlQueryAllowed doesn't escape + = & which corrupt form data
+    private static let formSafeChars: CharacterSet = {
+        var cs = CharacterSet.alphanumerics
+        cs.insert(charactersIn: "-._~")
+        return cs
+    }()
+
+    static func encodeFormData(_ dict: [String: Any]) -> Data {
+        dict.map { key, value in
+            let k = "\(key)".addingPercentEncoding(withAllowedCharacters: formSafeChars) ?? "\(key)"
+            let v = "\(value)".addingPercentEncoding(withAllowedCharacters: formSafeChars) ?? "\(value)"
+            return "\(k)=\(v)"
+        }.joined(separator: "&").data(using: .utf8) ?? Data()
+    }
+
     static func decode(_ data: Data) throws -> [String: Any] {
-        guard let plist = try PropertyListSerialization.propertyList(
-            from: data, options: [], format: nil
-        ) as? [String: Any] else {
-            throw AppStoreError.downloadFailed("invalid plist response")
+        let normalized = normalizePlistData(data)
+        do {
+            guard let plist = try PropertyListSerialization.propertyList(
+                from: normalized, options: [], format: nil
+            ) as? [String: Any] else {
+                let preview = String(data: normalized.prefix(500), encoding: .utf8) ?? "binary"
+                throw AppStoreError.downloadFailed("not a dict plist. Preview: \(preview)")
+            }
+            return plist
+        } catch let error as AppStoreError {
+            throw error
+        } catch {
+            let preview = String(data: normalized.prefix(500), encoding: .utf8) ?? "binary"
+            throw AppStoreError.downloadFailed("plist parse error: \(error.localizedDescription). Preview: \(preview)")
         }
-        return plist
+    }
+
+    private static func normalizePlistData(_ data: Data) -> Data {
+        guard let xml = String(data: data, encoding: .utf8) else { return data }
+        if let plistRange = xml.range(of: "<plist"),
+           let endRange = xml.range(of: "</plist>") {
+            let plistString = String(xml[plistRange.lowerBound..<endRange.upperBound])
+            if let plistData = plistString.data(using: .utf8) {
+                return plistData
+            }
+        }
+        if xml.contains("<dict>") && !xml.contains("<plist") {
+            let wrapped = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\"><plist version=\"1.0\">\(xml)</plist>"
+            if let wrappedData = wrapped.data(using: .utf8) {
+                return wrappedData
+            }
+        }
+        return data
     }
 
     static func buildLoginPayload(email: String, password: String, authCode: String,

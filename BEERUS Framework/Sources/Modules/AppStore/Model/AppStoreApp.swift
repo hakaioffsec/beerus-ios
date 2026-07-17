@@ -6,6 +6,7 @@ struct AppStoreApp: Codable {
     let name: String
     let version: String
     let price: Double
+    let iconURL: String?
 
     enum CodingKeys: String, CodingKey {
         case id = "trackId"
@@ -13,5 +14,6 @@ struct AppStoreApp: Codable {
         case name = "trackName"
         case version
         case price
+        case iconURL = "artworkUrl100"
     }
 }

@@ -6,9 +6,9 @@ FRAMEWORKS = -framework CoreFoundation
 
 all: beerusd
 
-beerusd: BeerusDaemon.c
-	$(CC) $(CFLAGS) $(LIBS) $(FRAMEWORKS) -o $@ $<
-	ldid -S $@
+beerusd: BeerusDaemon.c BeerusInjector.c MachOPatcher.c
+	$(CC) $(CFLAGS) $(LIBS) $(FRAMEWORKS) -o $@ BeerusDaemon.c BeerusInjector.c MachOPatcher.c
+	ldid -Sent.plist $@
 
 clean:
 	rm -f beerusd

@@ -181,6 +181,7 @@ final class FridaVersionsViewController: UIViewController {
                 DispatchQueue.main.async {
                     switch result {
                     case .success(let filePath):
+                        NSLog("[FridaDownload] Download completed, path: %@", filePath)
                         self?.installBinary(from: filePath, at: index)
                     case .failure(let error):
                         if (error as NSError).code == NSURLErrorCancelled { return }
@@ -194,6 +195,28 @@ final class FridaVersionsViewController: UIViewController {
     }
 
     private func installBinary(from filePath: String, at index: Int) {
+        // ponytail: verify file exists and get size before sending to daemon
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: filePath) else {
+            NSLog("[FridaInstall] ERROR: File does not exist at: %@", filePath)
+            cellStatuses[index] = .failed("Download failed")
+            reloadCell(at: index)
+            showAlert(title: "Download Failed", message: "File not found at: \(filePath)")
+            return
+        }
+
+        let attrs = try? fm.attributesOfItem(atPath: filePath)
+        let size = (attrs?[.size] as? Int) ?? 0
+        NSLog("[FridaInstall] File exists at %@ with size %d bytes", filePath, size)
+
+        guard size > 1000 else {
+            cellStatuses[index] = .failed("Download incomplete")
+            reloadCell(at: index)
+            showAlert(title: "Download Failed", message: "File too small (\(size) bytes)")
+            return
+        }
+
+        NSLog("[FridaInstall] Installing from: %@", filePath)
         cellStatuses[index] = .installing
         reloadCell(at: index)
 
@@ -209,6 +232,8 @@ final class FridaVersionsViewController: UIViewController {
                     self?.cellStatuses[index] = .installed
                     self?.tableView.reloadData()
                     FridaChecker.notifyStatusChanged()
+                    // ponytail: cleanup after successful install
+                    try? FileManager.default.removeItem(atPath: filePath)
                 } else {
                     self?.cellStatuses[index] = .failed("Install failed")
                     self?.reloadCell(at: index)

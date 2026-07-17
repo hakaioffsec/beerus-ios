@@ -106,57 +106,78 @@ final class SetupFridaViewController: BaseViewController {
     }
     
     @objc private func ToggleFrida(_ sender: UIButton) {
-        
-        if (FileManager.default.fileExists(atPath: BeerusStrings.fridaDaemonPath)) {
-            buttonStart.isEnabled = false
-            if (isRunning) {
-                RootExec.shellAwait("launchctl unload \(BeerusStrings.fridaDaemonPath)") {_ in
-                    DispatchQueue.main.async {
-                        self.buttonStart.isEnabled = true
-                    }
-                }
-            } else {
-                if (selectedVersion == versionRunning) {
-                    RootExec.shellAwait("launchctl load \(BeerusStrings.fridaDaemonPath)") {_ in
-                        DispatchQueue.main.async {
-                            self.buttonStart.isEnabled = true
-                        }
-                    }
-                } else {
-                    startDownloading = true
-                    buttonStart.isEnabled = false
+        buttonStart.isEnabled = false
 
-                    if let deviceArch = Exec.command(BeerusStrings.dpkgBin, arguments: ["--print-architecture"], findPath: false) {
-                        let deviceArchCleanOut = deviceArch.trimmingCharacters(in: .whitespacesAndNewlines)
-            
-                        if !deviceArchCleanOut.isEmpty {
-                            Requests.downloadFile(
-                                from: "https://github.com/frida/frida/releases/download/\(selectedVersion)/frida_\(selectedVersion)_\(deviceArchCleanOut).deb",
-                                fileName: "frida-server.deb",
-                                destinationPath: BeerusStrings.tmp
-                            ) { result in
-                                switch result {
-                                case .success(let url):
-                                    RootExec.shellAwait("dpkg -i \(BeerusStrings.tmp)frida-server.deb") {result in
-                                        DispatchQueue.main.async {
-                                            self.startDownloading = false
-                                            self.buttonStart.isEnabled = true
-                                            self.checkFridaRunning()
-                                        }
-                                    }
-                                case .failure(let error):
-                                    DispatchQueue.main.async {
-                                        self.startDownloading = false
-                                        self.buttonStart.isEnabled = true
-                                        self.checkFridaRunning()
-                                    }
-                                }
-                            }
-                        }
+        if isRunning {
+            // ponytail: use daemon's STOP_FRIDA - uses posix kill, works on rootless
+            DispatchQueue.global().async {
+                let result = RootExec.stopFrida()
+                DispatchQueue.main.async {
+                    self.buttonStart.isEnabled = true
+                    self.checkFridaRunning()
+                    if result?.hasPrefix("error") == true {
+                        Alert.show(title: "Stop Failed", message: result ?? "Unknown error")
                     }
                 }
             }
-            checkFridaRunning()
+        } else if selectedVersion == versionRunning || versionRunning.isEmpty {
+            // ponytail: use daemon's RESTART_FRIDA - uses posix_spawn, works on rootless
+            DispatchQueue.global().async {
+                let result = RootExec.restartFrida()
+                DispatchQueue.main.async {
+                    self.buttonStart.isEnabled = true
+                    self.checkFridaRunning()
+                    if result?.hasPrefix("error") == true {
+                        Alert.show(title: "Start Failed", message: result ?? "Unknown error")
+                    }
+                }
+            }
+        } else {
+            // Download and install new version
+            startDownloading = true
+            checkFridaRunning() // show "Downloading" status
+
+            if let deviceArch = Exec.command(BeerusStrings.dpkgBin, arguments: ["--print-architecture"], findPath: false) {
+                let deviceArchCleanOut = deviceArch.trimmingCharacters(in: .whitespacesAndNewlines)
+
+                if !deviceArchCleanOut.isEmpty {
+                    let tmpDir = "/var/tmp/"
+                    let downloadURL = "https://github.com/frida/frida/releases/download/\(selectedVersion)/frida_\(selectedVersion)_\(deviceArchCleanOut).deb"
+
+                    Requests.downloadFile(
+                        from: downloadURL,
+                        fileName: "frida-server.deb",
+                        destinationPath: tmpDir
+                    ) { result in
+                        switch result {
+                        case .success(let url):
+                            RootExec.shellAwait("dpkg -i \(url.path)") { _ in
+                                try? FileManager.default.removeItem(at: url)
+                                DispatchQueue.main.async {
+                                    self.startDownloading = false
+                                    self.buttonStart.isEnabled = true
+                                    self.checkFridaRunning()
+                                }
+                            }
+                        case .failure(let error):
+                            DispatchQueue.main.async {
+                                self.startDownloading = false
+                                self.buttonStart.isEnabled = true
+                                self.checkFridaRunning()
+                                Alert.show(title: "Download Failed", message: error.localizedDescription)
+                            }
+                        }
+                    }
+                } else {
+                    startDownloading = false
+                    buttonStart.isEnabled = true
+                    Alert.show(title: "Error", message: "Could not detect device architecture")
+                }
+            } else {
+                startDownloading = false
+                buttonStart.isEnabled = true
+                Alert.show(title: "Error", message: "dpkg not available")
+            }
         }
     }
     
@@ -207,13 +228,13 @@ final class SetupFridaViewController: BaseViewController {
         return iv
     }()
 
-        private lazy var titleLabel: UILabel = {
+    private lazy var titleLabel: UILabel = {
         let label = UILabel()
         label.text = "Frida Setup"
         label.font = UIFont(name: "IBM Plex Mono Bold", size: 20)
         label.textAlignment = .center
         label.numberOfLines = 0
-        label.tintColor = .white
+        label.textColor = .white
         label.translatesAutoresizingMaskIntoConstraints = false
         return label
     }()
@@ -225,11 +246,11 @@ final class SetupFridaViewController: BaseViewController {
         button.backgroundColor = UIColor(named: "ButtonColorWhite")
         button.layer.cornerRadius = 10
         button.titleLabel?.font = UIFont(name: "IBM Plex Mono Bold", size: 15)
+        button.translatesAutoresizingMaskIntoConstraints = false
         button.addTarget(self, action: #selector(onVersionsTap(_:)), for: .touchUpInside)
         return button
     }()
-    
-    
+
     private lazy var buttonStart: UIButton = {
         let button = UIButton()
         button.setTitle("Start Frida", for: .normal)
@@ -237,12 +258,11 @@ final class SetupFridaViewController: BaseViewController {
         button.backgroundColor = UIColor(named: "ButtonColorWhite")
         button.layer.cornerRadius = 10
         button.titleLabel?.font = UIFont(name: "IBM Plex Mono Bold", size: 15)
+        button.translatesAutoresizingMaskIntoConstraints = false
         button.addTarget(self, action: #selector(ToggleFrida(_:)), for: .touchUpInside)
         return button
     }()
-    
-    
-    
+
     private lazy var manageVersionsButton: UIButton = {
         let button = UIButton()
         button.setTitle("Manage Versions", for: .normal)
@@ -250,6 +270,7 @@ final class SetupFridaViewController: BaseViewController {
         button.backgroundColor = UIColor(named: "ButtonColorWhite")
         button.layer.cornerRadius = 10
         button.titleLabel?.font = UIFont(name: "IBM Plex Mono Bold", size: 15)
+        button.translatesAutoresizingMaskIntoConstraints = false
         button.addTarget(self, action: #selector(manageVersionsTapped), for: .touchUpInside)
         return button
     }()
@@ -269,18 +290,18 @@ final class SetupFridaViewController: BaseViewController {
         label.font = UIFont(name: "IBM Plex Mono Bold", size: 20)
         label.textAlignment = .center
         label.numberOfLines = 0
-        label.tintColor = .white
+        label.textColor = .white
         label.translatesAutoresizingMaskIntoConstraints = false
         return label
     }()
-    
+
     private lazy var fridaStatusLabel: UILabel = {
         let label = UILabel()
         label.text = "Status: Stopped"
         label.font = UIFont(name: "IBM Plex Mono Bold", size: 20)
         label.textAlignment = .center
         label.numberOfLines = 0
-        label.tintColor = .white
+        label.textColor = .white
         label.translatesAutoresizingMaskIntoConstraints = false
         return label
     }()
