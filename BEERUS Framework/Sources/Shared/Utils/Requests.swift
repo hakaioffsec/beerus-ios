@@ -64,6 +64,9 @@ final class Requests {
                 let fileManager = FileManager.default
                 let destinationDir = URL(fileURLWithPath: destinationPath, isDirectory: true)
 
+                // ponytail: ensure destination directory exists
+                try fileManager.createDirectory(at: destinationDir, withIntermediateDirectories: true)
+
                 let finalName = fileName ?? url.lastPathComponent
                 let destinationURL = destinationDir.appendingPathComponent(finalName)
 

@@ -1,5 +1,6 @@
 import Foundation
 import Compression
+import zlib
 
 enum ZipArchive {
 
@@ -221,7 +222,167 @@ enum ZipArchive {
 
 enum ZipError: LocalizedError {
     case cannotEnumerate
-    var errorDescription: String? { "Cannot enumerate directory" }
+    case invalidZip
+    case extractFailed(String)
+    var errorDescription: String? {
+        switch self {
+        case .cannotEnumerate: return "Cannot enumerate directory"
+        case .invalidZip: return "Invalid ZIP file"
+        case .extractFailed(let msg): return "Extract failed: \(msg)"
+        }
+    }
+}
+
+// MARK: - ZIP Extraction (Streaming)
+
+extension ZipArchive {
+
+    /// Extract ZIP streaming from FileHandle - avoids loading entire file into memory
+    static func extract(from zipPath: String, to destDir: String) throws {
+        let fm = FileManager.default
+        guard let handle = FileHandle(forReadingAtPath: zipPath) else {
+            throw ZipError.invalidZip
+        }
+        defer { handle.closeFile() }
+
+        try fm.createDirectory(atPath: destDir, withIntermediateDirectories: true)
+
+        // ponytail: stream ZIP entries, never load entire file
+        while true {
+            let headerData = handle.readData(ofLength: 30)
+            guard headerData.count == 30 else { break }
+
+            // Check local file header signature
+            guard headerData[0] == 0x50, headerData[1] == 0x4b,
+                  headerData[2] == 0x03, headerData[3] == 0x04 else { break }
+
+            let gpFlag = readU16(headerData, 6)
+            let method = readU16(headerData, 8)
+            let compSize = Int(readU32(headerData, 18))
+            let uncompSize = Int(readU32(headerData, 22))
+            let nameLen = Int(readU16(headerData, 26))
+            let extraLen = Int(readU16(headerData, 28))
+
+            let nameData = handle.readData(ofLength: nameLen)
+            _ = handle.readData(ofLength: extraLen) // skip extra field
+
+            guard let name = String(data: nameData, encoding: .utf8), !name.isEmpty else {
+                // Skip unknown entry - need sizes to seek past
+                if compSize > 0 {
+                    handle.seek(toFileOffset: handle.offsetInFile + UInt64(compSize))
+                }
+                continue
+            }
+
+            // ponytail: Data descriptor (bit 3) means sizes follow data, not in header
+            // For now skip these - rare in IPAs. Add when encountering one that needs it.
+            let hasDataDescriptor = (gpFlag & 0x08) != 0
+            if hasDataDescriptor && compSize == 0 {
+                throw ZipError.extractFailed("Data descriptor not supported for \(name)")
+            }
+
+            let fullPath = (destDir as NSString).appendingPathComponent(name)
+
+            if name.hasSuffix("/") {
+                try fm.createDirectory(atPath: fullPath, withIntermediateDirectories: true)
+                continue
+            }
+
+            let dir = (fullPath as NSString).deletingLastPathComponent
+            try fm.createDirectory(atPath: dir, withIntermediateDirectories: true)
+
+            let content: Data
+            if method == 8 {
+                // Deflate - read compressed data and decompress with libz
+                let compressedData = handle.readData(ofLength: compSize)
+                guard let decompressed = compressedData.inflateRaw(expectedSize: uncompSize) else {
+                    throw ZipError.extractFailed("decompress failed for \(name)")
+                }
+                content = decompressed
+            } else if method == 0 {
+                // Stored - read directly
+                content = handle.readData(ofLength: compSize)
+            } else {
+                throw ZipError.extractFailed("Unsupported compression method \(method) for \(name)")
+            }
+
+            try content.write(to: URL(fileURLWithPath: fullPath))
+        }
+    }
+
+    private static func readU16(_ data: Data, _ offset: Int) -> UInt16 {
+        UInt16(data[offset]) | (UInt16(data[offset + 1]) << 8)
+    }
+
+    private static func readU32(_ data: Data, _ offset: Int) -> UInt32 {
+        UInt32(data[offset]) | (UInt32(data[offset + 1]) << 8) |
+        (UInt32(data[offset + 2]) << 16) | (UInt32(data[offset + 3]) << 24)
+    }
+}
+
+// MARK: - Raw Deflate Decompression via libz
+
+extension Data {
+    /// Decompress raw deflate (RFC 1951) using libz inflateInit2 with -MAX_WBITS
+    /// ponytail: Apple's Compression framework cannot decode raw deflate - it only supports zlib-wrapped.
+    /// libz with negative windowBits (-15) enables raw deflate mode.
+    func inflateRaw(expectedSize: Int? = nil) -> Data? {
+        guard !isEmpty else { return nil }
+
+        var stream = z_stream()
+
+        let result = withUnsafeBytes { (srcBuffer: UnsafeRawBufferPointer) -> Data? in
+            guard let srcBase = srcBuffer.baseAddress else { return nil }
+
+            stream.next_in = UnsafeMutablePointer(mutating: srcBase.assumingMemoryBound(to: Bytef.self))
+            stream.avail_in = uInt(srcBuffer.count)
+
+            // -15 = raw deflate (no zlib/gzip header). Negative windowBits = raw mode.
+            // ponytail: this is THE fix - Apple's COMPRESSION_ZLIB cannot do this
+            let initResult = inflateInit2_(&stream, -15, ZLIB_VERSION, Int32(MemoryLayout<z_stream>.size))
+            guard initResult == Z_OK else { return nil }
+
+            defer { inflateEnd(&stream) }
+
+            // Use expected size if available, else estimate
+            var outputSize = expectedSize ?? Swift.max(count * 4, 1024)
+            var output = Data(count: outputSize)
+
+            while true {
+                let inflateResult = output.withUnsafeMutableBytes { (dstBuffer: UnsafeMutableRawBufferPointer) -> Int32 in
+                    guard let dstBase = dstBuffer.baseAddress else { return Z_MEM_ERROR }
+
+                    stream.next_out = dstBase.assumingMemoryBound(to: Bytef.self).advanced(by: Int(stream.total_out))
+                    stream.avail_out = uInt(dstBuffer.count - Int(stream.total_out))
+
+                    return inflate(&stream, Z_NO_FLUSH)
+                }
+
+                if inflateResult == Z_STREAM_END {
+                    output.count = Int(stream.total_out)
+                    return output
+                }
+
+                if inflateResult == Z_BUF_ERROR || (inflateResult == Z_OK && stream.avail_out == 0) {
+                    // Need more output space
+                    outputSize *= 2
+                    output.count = outputSize
+                    continue
+                }
+
+                if inflateResult != Z_OK {
+                    return nil
+                }
+            }
+        }
+
+        return result
+    }
+
+    /// Legacy decompress - calls inflateRaw for compatibility
+    func decompress() -> Data? {
+        return inflateRaw()
+    }
 }
 
 private extension Data {

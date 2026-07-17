@@ -1,17 +1,17 @@
 import UIKit
 
 final class ContainerViewController: UIViewController {
-    
+
     private var itemsToActive: [UIView] = []
-    
+
     enum MenuState {
         case closed
         case opened
     }
-    
+
     private var menuState: MenuState = .closed
     private var navController: UINavigationController?
-    
+
     private lazy var homeViewController = HomeViewController()
     private lazy var setupFridaViewController = SetupFridaViewController()
     private lazy var proxyProfilesViewController = ProxyProfilesViewController()
@@ -20,24 +20,40 @@ final class ContainerViewController: UIViewController {
     private lazy var lldbServerViewController = LLDBServerViewController()
     private lazy var terminalViewController = TerminalViewController()
     private lazy var plistReaderViewController = PlistReaderViewController()
-<<<<<<< HEAD
-=======
     private lazy var scriptListViewController = ScriptListViewController()
->>>>>>> ae68300 (feat: add script editor, and frida integration)
-    
+    private lazy var jailbreakBypassViewController = JailbreakBypassViewController()
+    // ponytail: computed property so it checks auth each time, not lazy
+    private var appStoreViewController: UIViewController {
+        if AppStoreCredentialManager.hasStoredAccount {
+            let vc = AppStoreSearchViewController()
+            vc.menuDelegate = self
+            return vc
+        } else {
+            let loginVC = AppStoreLoginViewController()
+            loginVC.menuDelegate = self
+            loginVC.onLoginSuccess = { [weak self] _ in
+                guard let self else { return }
+                let searchVC = AppStoreSearchViewController()
+                searchVC.menuDelegate = self
+                self.navController?.setViewControllers([searchVC], animated: true)
+            }
+            return loginVC
+        }
+    }
+
     private lazy var sideMenuView: SideMenuView = {
         let menu = SideMenuView()
         menu.translatesAutoresizingMaskIntoConstraints = false
         menu.frame.origin.x = -menu.frame.width
         return menu
     }()
-    
+
     override func viewDidLoad() {
         super.viewDidLoad()
         applyViewCode()
         setupSwipeGestures()
     }
-    
+
     private func setupSwipeGestures() {
         addSwipeGesture(for: .left)
         addSwipeGesture(for: .right)
@@ -48,7 +64,7 @@ final class ContainerViewController: UIViewController {
         gesture.edges = edge
         view.addGestureRecognizer(gesture)
     }
-    
+
     @objc private func handleSwipeGesture(_ gestureRecognizer: UIScreenEdgePanGestureRecognizer) {
         if gestureRecognizer.state == .ended {
             toggleMenu()
@@ -59,14 +75,14 @@ final class ContainerViewController: UIViewController {
 extension ContainerViewController: ViewCode {
     func buildViewHierarchy() {
         view.addSubview(sideMenuView)
-        
+
         let navController = UINavigationController(rootViewController: homeViewController)
         addChild(navController)
         view.addSubview(navController.view)
         navController.didMove(toParent: self)
         self.navController = navController
     }
-    
+
     func setupAdditionalConfiguration() {
         view.backgroundColor = .SIDE
 
@@ -78,13 +94,11 @@ extension ContainerViewController: ViewCode {
         lldbServerViewController.menuDelegate = self
         terminalViewController.menuDelegate = self
         plistReaderViewController.menuDelegate = self
-<<<<<<< HEAD
-=======
         scriptListViewController.menuDelegate = self
->>>>>>> ae68300 (feat: add script editor, and frida integration)
+        jailbreakBypassViewController.menuDelegate = self
         sideMenuView.delegate = self
     }
-    
+
     func setupConstraints() {
         NSLayoutConstraint.activate([
             sideMenuView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
@@ -99,11 +113,11 @@ extension ContainerViewController: MenuButtonDelegate {
     func didTapMenuButton() {
         toggleMenu()
     }
-    
+
     var isMenuOpened: Bool {
         menuState == .opened
     }
-    
+
     func toggleMenu() {
         if shouldPopNavigationStack() {
             navController?.popToRootViewController(animated: true)
@@ -175,21 +189,22 @@ extension ContainerViewController: SideMenuViewDelegate {
             show(viewController: terminalViewController)
         case .plistReader:
             show(viewController: plistReaderViewController)
-<<<<<<< HEAD
-=======
         case .scriptEditor:
             show(viewController: scriptListViewController)
->>>>>>> ae68300 (feat: add script editor, and frida integration)
+        case .appStore:
+            show(viewController: appStoreViewController)
+        case .jailbreakBypass:
+            show(viewController: jailbreakBypassViewController)
         }
     }
-    
+
     private func show(viewController: UIViewController) {
         navController?.setViewControllers([viewController], animated: false)
     }
 }
 
 extension ContainerViewController {
-    
+
     private func disableCurrentViewInteraction() {
         guard let currentViewController = navController?.topViewController else { return }
 
