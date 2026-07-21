@@ -61,3 +61,21 @@ fastlane/screenshots
 # *.mobileprovision
 BEERUS Framework.xcodeproj/project.pbxproj
 BEERUS Framework.deb
+<<<<<<< Updated upstream
+=======
+
+# Beerus exclusions
+JailbreakDetector/
+JailbreakDetector.zip
+CLAUDE.md
+docs/superpowers/
+
+# Build artifacts
+*.o
+*.dylib
+Daemon/beerusd
+BeerusCloak/*.o
+BeerusCloak/*.dylib
+SpawnHook/*.o
+SpawnHook/*.dylib
+>>>>>>> Stashed changes

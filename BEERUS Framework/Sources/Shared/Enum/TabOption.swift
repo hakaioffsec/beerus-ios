@@ -9,10 +9,9 @@ enum TabOption: String, CaseIterable {
     case proxyProfiles = "Proxy Profiles"
     case terminal = "Terminal"
     case plistReader = "Plist Reader"
-<<<<<<< HEAD
-=======
     case scriptEditor = "Script Editor"
->>>>>>> ae68300 (feat: add script editor, and frida integration)
+    case appStore = "App Store"
+    case jailbreakBypass = "Cloak"
 
     var icon: String {
         switch self {
@@ -24,10 +23,9 @@ enum TabOption: String, CaseIterable {
         case .proxyProfiles: return "network"
         case .terminal: return "terminal"
         case .plistReader: return "house"
-<<<<<<< HEAD
-=======
         case .scriptEditor: return "scroll"
->>>>>>> ae68300 (feat: add script editor, and frida integration)
+        case .appStore: return "cart.fill"
+        case .jailbreakBypass: return "shield.slash"
         }
     }
 
@@ -48,12 +46,15 @@ enum TabOption: String, CaseIterable {
         case .proxyProfiles:
             return UIImage(systemName: "wifi")?
                 .withRenderingMode(.alwaysTemplate)
-<<<<<<< HEAD
-=======
         case .scriptEditor:
             return UIImage(systemName: "scroll.fill")?
                 .withRenderingMode(.alwaysTemplate)
->>>>>>> ae68300 (feat: add script editor, and frida integration)
+        case .appStore:
+            return UIImage(systemName: "cart.fill")?
+                .withRenderingMode(.alwaysTemplate)
+        case .jailbreakBypass:
+            return UIImage(systemName: "shield.slash.fill")?
+                .withRenderingMode(.alwaysTemplate)
         default:
             return UIImage(named: icon)?
                 .withRenderingMode(.alwaysTemplate)
