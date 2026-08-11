@@ -88,9 +88,10 @@ compileDaemon() {
     -isysroot "$SDK" \
     -miphoneos-version-min=14.0 \
     -O2 -Wall \
-    -lproc \
     -framework CoreFoundation \
-    Daemon/BeerusDaemon.c Daemon/BeerusInjector.c Daemon/MachOPatcher.c -o Daemon/beerusd
+    Daemon/BeerusDaemon.c Daemon/BeerusInjector.c Daemon/MachOPatcher.c \
+    -lproc -lz \
+    -o Daemon/beerusd
 
     ldid -SDaemon/ent.plist Daemon/beerusd
 }

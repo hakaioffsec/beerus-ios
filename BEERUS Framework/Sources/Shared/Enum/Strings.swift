@@ -14,8 +14,9 @@ enum JailbreakRoot {
 
 final class BeerusStrings {
 
-    static let rootType: JailbreakRoot = {
-        FileManager.default.fileExists(atPath: "/var/jb") ? .rootless : .rootful
+    static var rootType: JailbreakRoot = {
+        let result = RootExec.shell("test -d /var/jb && echo 1")
+        return result.output.contains("1") ? .rootless : .rootful
     }()
 
     static var root: String {

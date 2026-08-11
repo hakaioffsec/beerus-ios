@@ -46,26 +46,20 @@ final class VersionListViewController: BaseViewController {
 
     private func loadVersions() {
         spinner.startAnimating()
-        Task {
+        Task { @MainActor in
             do {
                 let result = try await fetchVersionsWithPurchase()
-                await MainActor.run {
-                    spinner.stopAnimating()
-                    versionIDs = result.identifiers.reversed()
-                    latestID = result.latestID
-                    tableView.reloadData()
-                    loadMetadataProgressively()
-                }
+                spinner.stopAnimating()
+                versionIDs = result.identifiers.reversed()
+                latestID = result.latestID
+                tableView.reloadData()
+                loadMetadataProgressively()
             } catch AppStoreError.tokenExpired {
-                await MainActor.run {
-                    spinner.stopAnimating()
-                    handleTokenExpired()
-                }
+                spinner.stopAnimating()
+                handleTokenExpired()
             } catch {
-                await MainActor.run {
-                    spinner.stopAnimating()
-                    showAlert(title: "Error", message: error.localizedDescription)
-                }
+                spinner.stopAnimating()
+                showAlert(title: "Error", message: error.localizedDescription)
             }
         }
     }

@@ -20,6 +20,15 @@ enum RootExec {
     static func openApp(_ bundleId: String) -> String? { send("OPEN_APP \(bundleId)") }
     static func refreshSpringBoard() -> String? { send("REFRESH_SB") }
 
+    static func compress(from sourcePath: String, output destinationPath: String) throws {
+        guard let response = send("COMPRESS \(sourcePath)|\(destinationPath)") else {
+            throw NSError(domain: "RootExec", code: -1, userInfo: [NSLocalizedDescriptionKey: "Daemon not responding"])
+        }
+        if !response.hasPrefix("ok:") {
+            throw NSError(domain: "RootExec", code: -1, userInfo: [NSLocalizedDescriptionKey: response])
+        }
+    }
+
     // JB Bypass commands
     static func jbBypassOn() -> String?     { send("JB_BYPASS_ON") }
     static func jbBypassOff() -> String?    { send("JB_BYPASS_OFF") }

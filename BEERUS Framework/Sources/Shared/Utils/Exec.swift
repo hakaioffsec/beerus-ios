@@ -35,11 +35,7 @@ final class Exec {
         close(outputPipe[1])
 
         guard status == 0 else {
-<<<<<<< HEAD
-            NSLog("Erro ao executar spawn: \(status)")
-=======
             NSLog("posix_spawn failed: %d", status)
->>>>>>> ae68300 (feat: add script editor, and frida integration)
             return nil
         }
 

@@ -16,6 +16,9 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <dirent.h>
+#include <stdint.h>
+#include <limits.h>
+#include <zlib.h>
 
 #define PROC_PIDPATHINFO_MAXSIZE 4096
 extern int proc_pidpath(int pid, void *buffer, uint32_t buffersize);
@@ -111,6 +114,262 @@ static const char *JB_HIDE_PATHS_ROOTFUL[] = {
 static char g_path_env[2048] = {0};
 // Full envp for spawned processes
 static char *g_envp[4] = {NULL, NULL, NULL, NULL};
+
+// ============================================================================
+// Tar.gz compression code for Sandbox Exfiltration
+// ============================================================================
+
+typedef struct {
+    char name[100];
+    char mode[8];
+    char uid[8];
+    char gid[8];
+    char size[12];
+    char mtime[12];
+    char checksum[8];
+    char typeflag;
+    char linkname[100];
+    char magic[6];
+    char version[2];
+    char uname[32];
+    char gname[32];
+    char devmajor[8];
+    char devminor[8];
+    char prefix[155];
+    char padding[12];
+} TarHeader;
+
+static void fill_octal(char *field, size_t size, unsigned long value) {
+    snprintf(field, size, "%0*lo", (int)(size - 1), value);
+}
+
+static void split_tar_path(const char *path, char *name, char *prefix) {
+    memset(name, 0, 100);
+    memset(prefix, 0, 155);
+
+    size_t len = strlen(path);
+
+    if (len < 100) {
+        strncpy(name, path, 99);
+        return;
+    }
+
+    const char *slash = path + len;
+
+    while (slash > path) {
+        slash--;
+        if (*slash == '/') {
+            size_t prefix_len = slash - path;
+            size_t name_len = len - prefix_len - 1;
+
+            if (prefix_len < 155 && name_len < 100) {
+                strncpy(prefix, path, prefix_len);
+                strncpy(name, slash + 1, name_len);
+                return;
+            }
+        }
+    }
+
+    strncpy(name, path, 99);
+}
+
+static void write_tar_header(gzFile gz, const char *tar_path, struct stat *st, char typeflag) {
+    TarHeader h;
+    memset(&h, 0, sizeof(h));
+
+    split_tar_path(tar_path, h.name, h.prefix);
+
+    fill_octal(h.mode, sizeof(h.mode), st->st_mode & 0777);
+    fill_octal(h.uid, sizeof(h.uid), st->st_uid);
+    fill_octal(h.gid, sizeof(h.gid), st->st_gid);
+
+    if (typeflag == '5') {
+        fill_octal(h.size, sizeof(h.size), 0);
+    } else {
+        fill_octal(h.size, sizeof(h.size), st->st_size);
+    }
+
+    fill_octal(h.mtime, sizeof(h.mtime), st->st_mtime);
+
+    memset(h.checksum, ' ', sizeof(h.checksum));
+
+    h.typeflag = typeflag;
+
+    memcpy(h.magic, "ustar", 5);
+    memcpy(h.version, "00", 2);
+
+    strcpy(h.uname, "mobile");
+    strcpy(h.gname, "mobile");
+
+    unsigned int sum = 0;
+    unsigned char *bytes = (unsigned char *)&h;
+
+    for (int i = 0; i < 512; i++) {
+        sum += bytes[i];
+    }
+
+    snprintf(h.checksum, sizeof(h.checksum), "%06o", sum);
+    h.checksum[6] = '\0';
+    h.checksum[7] = ' ';
+
+    gzwrite(gz, &h, 512);
+}
+
+static void write_padding(gzFile gz, size_t size) {
+    size_t padding_size = (512 - (size % 512)) % 512;
+
+    if (padding_size > 0) {
+        char zeros[512] = {0};
+        gzwrite(gz, zeros, padding_size);
+    }
+}
+
+static int add_file(gzFile gz, const char *real_path, const char *tar_path) {
+    struct stat st;
+
+    if (lstat(real_path, &st) != 0) {
+        perror("lstat");
+        return -1;
+    }
+
+    if (S_ISDIR(st.st_mode)) {
+        char dir_tar_path[PATH_MAX];
+
+        snprintf(dir_tar_path, sizeof(dir_tar_path), "%s/", tar_path);
+        write_tar_header(gz, dir_tar_path, &st, '5');
+        return 0;
+    }
+
+    if (!S_ISREG(st.st_mode)) {
+        return 0;
+    }
+
+    write_tar_header(gz, tar_path, &st, '0');
+
+    FILE *f = fopen(real_path, "rb");
+    if (!f) {
+        perror("fopen");
+        return -1;
+    }
+
+    char buffer[8192];
+    size_t read_len;
+
+    while ((read_len = fread(buffer, 1, sizeof(buffer), f)) > 0) {
+        gzwrite(gz, buffer, (unsigned int)read_len);
+    }
+
+    fclose(f);
+
+    write_padding(gz, st.st_size);
+
+    return 0;
+}
+
+static void get_archive_root_name(const char *output_path, char *root_name, size_t root_size) {
+    const char *base = strrchr(output_path, '/');
+
+    if (base) {
+        base++;
+    } else {
+        base = output_path;
+    }
+
+    snprintf(root_name, root_size, "%s", base);
+
+    size_t len = strlen(root_name);
+
+    if (len > 7 && strcmp(root_name + len - 7, ".tar.gz") == 0) {
+        root_name[len - 7] = '\0';
+    } else if (len > 4 && strcmp(root_name + len - 4, ".tgz") == 0) {
+        root_name[len - 4] = '\0';
+    } else if (len > 4 && strcmp(root_name + len - 4, ".tar") == 0) {
+        root_name[len - 4] = '\0';
+    }
+}
+
+static int add_folder_recursive(gzFile gz, const char *base_path, const char *current_path, const char *root_name) {
+    DIR *dir = opendir(current_path);
+
+    if (!dir) {
+        perror("opendir");
+        return -1;
+    }
+
+    struct dirent *entry;
+
+    while ((entry = readdir(dir)) != NULL) {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
+            continue;
+        }
+
+        char real_path[PATH_MAX];
+        snprintf(real_path, sizeof(real_path), "%s/%s", current_path, entry->d_name);
+
+        char relative_path[PATH_MAX];
+
+        if (strncmp(real_path, base_path, strlen(base_path)) == 0) {
+            snprintf(relative_path, sizeof(relative_path), "%s", real_path + strlen(base_path) + 1);
+        } else {
+            snprintf(relative_path, sizeof(relative_path), "%s", entry->d_name);
+        }
+
+        char tar_path[PATH_MAX];
+        snprintf(tar_path, sizeof(tar_path), "%s/%s", root_name, relative_path);
+
+        struct stat st;
+
+        if (lstat(real_path, &st) != 0) {
+            continue;
+        }
+
+        add_file(gz, real_path, tar_path);
+
+        if (S_ISDIR(st.st_mode)) {
+            add_folder_recursive(gz, base_path, real_path, root_name);
+        }
+    }
+
+    closedir(dir);
+    return 0;
+}
+
+static int create_tar_gz(const char *folder_path, const char *output_path) {
+    gzFile gz = gzopen(output_path, "wb9");
+
+    if (!gz) {
+        fprintf(stderr, "Error creating: %s\n", output_path);
+        return -1;
+    }
+
+    char root_name[256];
+    get_archive_root_name(output_path, root_name, sizeof(root_name));
+
+    struct stat st;
+    if (lstat(folder_path, &st) != 0) {
+        perror("lstat folder_path");
+        gzclose(gz);
+        return -1;
+    }
+
+    char root_dir[PATH_MAX];
+    snprintf(root_dir, sizeof(root_dir), "%s", root_name);
+
+    write_tar_header(gz, root_dir, &st, '5');
+
+    add_folder_recursive(gz, folder_path, folder_path, root_name);
+
+    char zeros[1024] = {0};
+    gzwrite(gz, zeros, sizeof(zeros));
+
+    gzclose(gz);
+
+    return 0;
+}
+
+// ============================================================================
+// End of Tar.gz compression code
+// ============================================================================
 
 static void detect_rootless(void) {
     struct stat st;
@@ -2487,6 +2746,29 @@ static void handle_client(int fd) {
     }
     else if (strncmp(buf, "REFRESH_SB", 10) == 0) {
         refresh_springboard(out, sizeof(out));
+    }
+    else if (strncmp(buf, "COMPRESS ", 9) == 0) {
+        char *args = buf + 9;
+
+        // Trim trailing whitespace/newline the client may have appended.
+        size_t alen = strlen(args);
+        while (alen > 0 && (args[alen - 1] == '\n' || args[alen - 1] == '\r' ||
+                            args[alen - 1] == ' '  || args[alen - 1] == '\t'))
+            args[--alen] = '\0';
+
+        // Format: COMPRESS <source>|<destination>
+        char *sep = strchr(args, '|');
+        if (!sep) {
+            snprintf(out, sizeof(out), "error: usage: COMPRESS <source>|<destination>");
+        } else {
+            *sep = '\0';
+            const char *src  = args;
+            const char *dest = sep + 1;
+            if (create_tar_gz(src, dest) == 0)
+                snprintf(out, sizeof(out), "ok: compressed to %s", dest);
+            else
+                snprintf(out, sizeof(out), "error: compression failed");
+        }
     }
     else if (strncmp(buf, "WHOAMI", 6) == 0) {
         snprintf(out, sizeof(out), "uid=%d euid=%d", getuid(), geteuid());

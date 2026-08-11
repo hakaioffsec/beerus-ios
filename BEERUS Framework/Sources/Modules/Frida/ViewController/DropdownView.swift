@@ -58,6 +58,24 @@ final class SimpleDropdown: UIView, UITableViewDataSource, UITableViewDelegate {
         return CGFloat(rows) * rowHeight
     }
 
+    func show(from anchorView: UIView, in containerView: UIView, maxRows: Int = 5, rowHeight: CGFloat = 44, margin: CGFloat = 8) {
+        let height = desiredHeight(maxRows: maxRows, rowHeight: rowHeight)
+        let anchorFrame = anchorView.convert(anchorView.bounds, to: containerView)
+
+        frame = CGRect(
+            x: anchorFrame.minX,
+            y: anchorFrame.maxY + margin,
+            width: anchorFrame.width,
+            height: height
+        )
+
+        if superview == nil {
+            containerView.addSubview(self)
+        }
+
+        tableView.reloadData()
+    }
+
     // MARK: UITableViewDataSource
     func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
         items.count

@@ -1,7 +1,7 @@
 import UIKit
 
 final class SetupFridaViewController: BaseViewController {
-    
+
     private var dropdown: SimpleDropdown?
     private var dropdownBackdrop: UIControl?
     private var versions: [String] = []
@@ -9,7 +9,7 @@ final class SetupFridaViewController: BaseViewController {
     private var versionRunning: String = ""
     private var isRunning: Bool = false
     private var startDownloading: Bool = false
-    
+
     @objc private func onVersionsTap(_ sender: UIButton) {
         if dropdown != nil { hideDropdown(); return }
         showDropdown()
@@ -24,7 +24,7 @@ final class SetupFridaViewController: BaseViewController {
             title: "Frida Version",
             message: message,
             placeholder: "16.7.12",
-            keyboardType: .phonePad
+            keyboardType: .decimalPad
 
         ) { [weak self] versionSelected in
             guard let self = self else { return }
@@ -56,7 +56,7 @@ final class SetupFridaViewController: BaseViewController {
         }
     }
 
-    
+
     private func showDropdown() {
         guard let window = view.window ?? UIApplication.shared.windows.first else { return }
 
@@ -81,15 +81,16 @@ final class SetupFridaViewController: BaseViewController {
                 self?.hideDropdown()
                 self?.selectedVersion = value
             }
-            
-        }
-        
-        let btnFrame = versionDropdown.convert(versionDropdown.bounds, to: window)
-        let width = btnFrame.width
-        let height = dd.desiredHeight(maxRows: 6, rowHeight: 44)
 
-        dd.frame = CGRect(x: btnFrame.minX, y: btnFrame.maxY + 6, width: width, height: height)
-        window.addSubview(dd)
+        }
+
+        dd.show(
+            from: versionDropdown,
+            in: window,
+            maxRows: 6,
+            rowHeight: 44
+        )
+
         dropdown = dd
     }
 
@@ -104,91 +105,159 @@ final class SetupFridaViewController: BaseViewController {
         dropdownBackdrop?.removeFromSuperview()
         dropdownBackdrop = nil
     }
-    
+
+    // MARK: - Frida Helpers
+
+    private func fridaDaemonExists() -> Bool {
+        let result = RootExec.shell("test -f \(BeerusStrings.fridaDaemonPath) && echo 1")
+        return result.output.contains("1")
+    }
+
     @objc private func ToggleFrida(_ sender: UIButton) {
+        NSLog("[BEERUS] \(BeerusStrings.launchctlBin) unload \(BeerusStrings.fridaDaemonPath)");
         buttonStart.isEnabled = false
 
         if isRunning {
-            // ponytail: use daemon's STOP_FRIDA - uses posix kill, works on rootless
-            DispatchQueue.global().async {
-                let result = RootExec.stopFrida()
-                DispatchQueue.main.async {
-                    self.buttonStart.isEnabled = true
-                    self.checkFridaRunning()
-                    if result?.hasPrefix("error") == true {
-                        Alert.show(title: "Stop Failed", message: result ?? "Unknown error")
+            // Stop Frida
+            if fridaDaemonExists() {
+                RootExec.shellAwait("\(BeerusStrings.launchctlBin) bootout system \(BeerusStrings.fridaDaemonPath)") { _ in
+                    DispatchQueue.main.async {
+                        self.buttonStart.isEnabled = true
+                        self.checkFridaRunning()
+                    }
+                }
+            } else {
+                RootExec.shellAwait("killall frida-server") { _ in
+                    DispatchQueue.main.async {
+                        self.buttonStart.isEnabled = true
+                        self.checkFridaRunning()
                     }
                 }
             }
-        } else if selectedVersion == versionRunning || versionRunning.isEmpty {
-            // ponytail: use daemon's RESTART_FRIDA - uses posix_spawn, works on rootless
-            DispatchQueue.global().async {
-                let result = RootExec.restartFrida()
+        } else if !versionRunning.isEmpty && selectedVersion == versionRunning && fridaDaemonExists() {
+            // Start existing version (já instalado)
+            RootExec.shellAwait("\(BeerusStrings.launchctlBin) bootstrap system \(BeerusStrings.fridaDaemonPath)") { _ in
                 DispatchQueue.main.async {
                     self.buttonStart.isEnabled = true
                     self.checkFridaRunning()
-                    if result?.hasPrefix("error") == true {
-                        Alert.show(title: "Start Failed", message: result ?? "Unknown error")
+                }
+            }
+        } else if !selectedVersion.isEmpty {
+            // Download and install new version
+            startDownloading = true
+            checkFridaRunning()
+
+            // Obtém arquitetura via dpkg
+            let archResult = RootExec.shell("\(BeerusStrings.dpkgBin) --print-architecture")
+            let arch = archResult.output.trimmingCharacters(in: .whitespacesAndNewlines)
+
+            guard !arch.isEmpty else {
+                DispatchQueue.main.async {
+                    self.startDownloading = false
+                    self.buttonStart.isEnabled = true
+                    self.checkFridaRunning()
+                    Alert.show(title: "Error", message: "Could not detect device architecture")
+                }
+                return
+            }
+
+            let debFileName = "frida-server.deb"
+            let downloadURL = "https://github.com/frida/frida/releases/download/\(selectedVersion)/frida_\(selectedVersion)_\(arch).deb"
+            let appTmpDir = NSTemporaryDirectory()
+            let systemDebPath = BeerusStrings.tmp + debFileName
+
+            NSLog("[Frida] Architecture: \(arch)")
+            NSLog("[Frida] Downloading from: \(downloadURL)")
+            NSLog("[Frida] App tmp: \(appTmpDir)")
+            NSLog("[Frida] System tmp: \(BeerusStrings.tmp)")
+
+            // Baixa para o tmp do app (sandbox permite)
+            Requests.downloadFile(
+                from: downloadURL,
+                fileName: debFileName,
+                destinationPath: appTmpDir
+            ) { result in
+                switch result {
+                case .success(let fileURL):
+                    NSLog("[Frida] Download success: \(fileURL.path)")
+
+                    // Verifica tamanho do arquivo
+                    let fileSize = (try? FileManager.default.attributesOfItem(atPath: fileURL.path)[.size] as? Int64) ?? 0
+                    NSLog("[Frida] File size: \(fileSize) bytes")
+
+                    if fileSize < 1000 {
+                        DispatchQueue.main.async {
+                            self.startDownloading = false
+                            self.buttonStart.isEnabled = true
+                            self.checkFridaRunning()
+                            Alert.show(title: "Download Failed", message: "File is too small or empty")
+                        }
+                        return
+                    }
+
+                    // Copia para o tmp do sistema via daemon
+                    let copyResult = RootExec.shell("cp '\(fileURL.path)' '\(systemDebPath)'")
+                    NSLog("[Frida] Copy result: \(copyResult.output), exit: \(copyResult.exitCode)")
+
+                    if copyResult.exitCode != 0 {
+                        DispatchQueue.main.async {
+                            self.startDownloading = false
+                            self.buttonStart.isEnabled = true
+                            self.checkFridaRunning()
+                            Alert.show(title: "Install Failed", message: "Failed to copy to system tmp")
+                        }
+                        return
+                    }
+
+                    // Instala usando o daemon
+                    if let response = RootExec.installFrida(from: systemDebPath) {
+                        NSLog("[Frida] Install response: \(response)")
+
+                        // Limpa arquivo temporário
+                        // _ = RootExec.shell("rm -f '\(systemDebPath)'")
+
+                        DispatchQueue.main.async {
+                            self.startDownloading = false
+                            self.buttonStart.isEnabled = true
+                            self.checkFridaRunning()
+
+                            if !response.hasPrefix("ok:") {
+                                Alert.show(title: "Install Failed", message: response)
+                            }
+                        }
+                    } else {
+                        DispatchQueue.main.async {
+                            self.startDownloading = false
+                            self.buttonStart.isEnabled = true
+                            self.checkFridaRunning()
+                            Alert.show(title: "Install Failed", message: "Daemon not responding")
+                        }
+                    }
+                case .failure(let error):
+                    NSLog("[Frida] Download failed: \(error.localizedDescription)")
+                    DispatchQueue.main.async {
+                        self.startDownloading = false
+                        self.buttonStart.isEnabled = true
+                        self.checkFridaRunning()
+                        Alert.show(title: "Download Failed", message: error.localizedDescription)
                     }
                 }
             }
         } else {
-            // Download and install new version
-            startDownloading = true
-            checkFridaRunning() // show "Downloading" status
-
-            if let deviceArch = Exec.command(BeerusStrings.dpkgBin, arguments: ["--print-architecture"], findPath: false) {
-                let deviceArchCleanOut = deviceArch.trimmingCharacters(in: .whitespacesAndNewlines)
-
-                if !deviceArchCleanOut.isEmpty {
-                    let tmpDir = "/var/tmp/"
-                    let downloadURL = "https://github.com/frida/frida/releases/download/\(selectedVersion)/frida_\(selectedVersion)_\(deviceArchCleanOut).deb"
-
-                    Requests.downloadFile(
-                        from: downloadURL,
-                        fileName: "frida-server.deb",
-                        destinationPath: tmpDir
-                    ) { result in
-                        switch result {
-                        case .success(let url):
-                            RootExec.shellAwait("dpkg -i \(url.path)") { _ in
-                                try? FileManager.default.removeItem(at: url)
-                                DispatchQueue.main.async {
-                                    self.startDownloading = false
-                                    self.buttonStart.isEnabled = true
-                                    self.checkFridaRunning()
-                                }
-                            }
-                        case .failure(let error):
-                            DispatchQueue.main.async {
-                                self.startDownloading = false
-                                self.buttonStart.isEnabled = true
-                                self.checkFridaRunning()
-                                Alert.show(title: "Download Failed", message: error.localizedDescription)
-                            }
-                        }
-                    }
-                } else {
-                    startDownloading = false
-                    buttonStart.isEnabled = true
-                    Alert.show(title: "Error", message: "Could not detect device architecture")
-                }
-            } else {
-                startDownloading = false
-                buttonStart.isEnabled = true
-                Alert.show(title: "Error", message: "dpkg not available")
-            }
+            // Nenhuma versão selecionada
+            buttonStart.isEnabled = true
+            Alert.show(title: "Error", message: "Select a Frida version first")
         }
     }
-    
-    
-    
-    
-    
-    
-    
-    
-    
+
+
+
+
+
+
+
+
+
     private lazy var circuitTopImageView: UIImageView = {
         let image = UIImage(named: "circuit-top")
         let imageView = UIImageView(image: image)
@@ -220,7 +289,7 @@ final class SetupFridaViewController: BaseViewController {
         imageView.translatesAutoresizingMaskIntoConstraints = false
         return imageView
     }()
-    
+
 
     private lazy var fridaMenuImageView: UIImageView = {
         let iv = UIImageView.circuit(named: "frida-menu-image")
@@ -228,13 +297,13 @@ final class SetupFridaViewController: BaseViewController {
         return iv
     }()
 
-    private lazy var titleLabel: UILabel = {
+        private lazy var titleLabel: UILabel = {
         let label = UILabel()
         label.text = "Frida Setup"
         label.font = UIFont(name: "IBM Plex Mono Bold", size: 20)
         label.textAlignment = .center
         label.numberOfLines = 0
-        label.textColor = .white
+        label.tintColor = .white
         label.translatesAutoresizingMaskIntoConstraints = false
         return label
     }()
@@ -246,10 +315,10 @@ final class SetupFridaViewController: BaseViewController {
         button.backgroundColor = UIColor(named: "ButtonColorWhite")
         button.layer.cornerRadius = 10
         button.titleLabel?.font = UIFont(name: "IBM Plex Mono Bold", size: 15)
-        button.translatesAutoresizingMaskIntoConstraints = false
         button.addTarget(self, action: #selector(onVersionsTap(_:)), for: .touchUpInside)
         return button
     }()
+
 
     private lazy var buttonStart: UIButton = {
         let button = UIButton()
@@ -258,22 +327,11 @@ final class SetupFridaViewController: BaseViewController {
         button.backgroundColor = UIColor(named: "ButtonColorWhite")
         button.layer.cornerRadius = 10
         button.titleLabel?.font = UIFont(name: "IBM Plex Mono Bold", size: 15)
-        button.translatesAutoresizingMaskIntoConstraints = false
         button.addTarget(self, action: #selector(ToggleFrida(_:)), for: .touchUpInside)
         return button
     }()
 
-    private lazy var manageVersionsButton: UIButton = {
-        let button = UIButton()
-        button.setTitle("Manage Versions", for: .normal)
-        button.setTitleColor(.RED, for: .normal)
-        button.backgroundColor = UIColor(named: "ButtonColorWhite")
-        button.layer.cornerRadius = 10
-        button.titleLabel?.font = UIFont(name: "IBM Plex Mono Bold", size: 15)
-        button.translatesAutoresizingMaskIntoConstraints = false
-        button.addTarget(self, action: #selector(manageVersionsTapped), for: .touchUpInside)
-        return button
-    }()
+
 
     private lazy var stackView: UIStackView = {
         let stackView = UIStackView()
@@ -283,14 +341,14 @@ final class SetupFridaViewController: BaseViewController {
         stackView.translatesAutoresizingMaskIntoConstraints = false
         return stackView
     }()
-    
+
     private lazy var fridaVersionLabel: UILabel = {
         let label = UILabel()
         label.text = "Version: None"
         label.font = UIFont(name: "IBM Plex Mono Bold", size: 20)
         label.textAlignment = .center
         label.numberOfLines = 0
-        label.textColor = .white
+        label.tintColor = .white
         label.translatesAutoresizingMaskIntoConstraints = false
         return label
     }()
@@ -301,26 +359,18 @@ final class SetupFridaViewController: BaseViewController {
         label.font = UIFont(name: "IBM Plex Mono Bold", size: 20)
         label.textAlignment = .center
         label.numberOfLines = 0
-        label.textColor = .white
+        label.tintColor = .white
         label.translatesAutoresizingMaskIntoConstraints = false
         return label
     }()
-    
+
     override func viewDidLoad() {
         super.viewDidLoad()
         applyViewCode()
         checkFridaRunning()
-
-        NotificationCenter.default.addObserver(self, selector: #selector(checkFridaRunning), name: FridaChecker.statusDidChangeNotification, object: nil)
     }
 
     deinit { NotificationCenter.default.removeObserver(self) }
-
-    @objc private func manageVersionsTapped() {
-        let vc = FridaVersionsViewController()
-        vc.modalPresentationStyle = .pageSheet
-        present(vc, animated: true)
-    }
 }
 
 extension SetupFridaViewController {
@@ -329,44 +379,45 @@ extension SetupFridaViewController {
         var statusText = "Status: Stopped"
         var versionText = "Version: None"
         var toggleFridaText = "Start Frida"
-        
-        
-        if (startDownloading) {
+
+
+        if startDownloading {
             statusText = "Status: Downloading"
         } else {
-            if let psOutput = Exec.command("ps", arguments: ["aux"]) {
-                let psFiltered = psOutput.split(separator: "\n").filter { $0.contains("frida-server") && !$0.contains("grep") }
-                let result = psFiltered.joined(separator: "\n")
-                
-                if !result.isEmpty {
-                    statusText = "Status: Running"
-                    toggleFridaText = "Stop Frida"
-                    isRunning = true
-                } else {
-                    isRunning = false
-                }
-                
+            let psResult = RootExec.shell("ps aux | grep frida-server | grep -v grep")
+            if psResult.exitCode == 0 && !psResult.output.isEmpty {
+                statusText = "Status: Running"
+                toggleFridaText = "Stop Frida"
+                isRunning = true
+            } else {
+                isRunning = false
             }
         }
-        
-        if let psOutput = Exec.command(BeerusStrings.fridaServerPath, arguments: ["--version"], findPath: false) {
-            let cleanOutput = psOutput.trimmingCharacters(in: .whitespacesAndNewlines)
-            
-            if !cleanOutput.isEmpty {
-                versionText = "Version: "+cleanOutput
-                versionRunning = cleanOutput
-                if (selectedVersion == "") {
-                    selectedVersion = cleanOutput
-                }
+
+        let versionResult = RootExec.shell("\(BeerusStrings.fridaServerPath) --version")
+        let cleanOutput = versionResult.output.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // Verifica se é uma versão válida (formato: X.X.X) e não uma mensagem de erro
+        let isValidVersion = versionResult.exitCode == 0
+            && !cleanOutput.isEmpty
+            && !cleanOutput.contains("sh:")
+            && !cleanOutput.contains("not found")
+            && cleanOutput.range(of: #"^\d+\.\d+\.\d+"#, options: .regularExpression) != nil
+
+        if isValidVersion {
+            versionText = "Version: " + cleanOutput
+            versionRunning = cleanOutput
+            if selectedVersion.isEmpty {
+                selectedVersion = cleanOutput
             }
         }
-        
-        if (versions == []) {
+
+        if versions.isEmpty {
             Github.getReleaseVersions(repository: "frida/frida") { resultVersions in
                 self.versions = resultVersions
             }
         }
-        
+
         DispatchQueue.main.async {
             self.fridaStatusLabel.text = statusText
             self.fridaVersionLabel.text = versionText
@@ -383,18 +434,18 @@ extension SetupFridaViewController: ViewCode {
         view.addSubview(circuitRightImageView)
         view.addSubview(circuitLeftImageView)
         view.addSubview(circuitLeftDownImageView)
-        
+
         view.addSubview(fridaMenuImageView)
         view.addSubview(fridaVersionLabel)
         view.addSubview(fridaStatusLabel)
-        
+
         view.addSubview(stackView)
-        view.addSubview(manageVersionsButton)
 
         stackView.addArrangedSubview(versionDropdown)
         stackView.addArrangedSubview(buttonStart)
+
     }
-    
+
     func setupConstraints() {
         NSLayoutConstraint.activate([
             titleLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
@@ -404,36 +455,31 @@ extension SetupFridaViewController: ViewCode {
 
             circuitTopImageView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             circuitTopImageView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 32),
-            
+
             circuitRightImageView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             circuitRightImageView.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor),
             circuitRightImageView.widthAnchor.constraint(equalToConstant: 40),
             circuitRightImageView.heightAnchor.constraint(equalTo: view.safeAreaLayoutGuide.heightAnchor),
-            
+
             circuitLeftImageView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             circuitLeftImageView.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor),
-                        
+
             circuitLeftDownImageView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             circuitLeftDownImageView.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor),
-                        
+
             fridaMenuImageView.centerYAnchor.constraint(equalTo: view.centerYAnchor, constant: -32),
             fridaMenuImageView.centerXAnchor.constraint(equalTo: view.centerXAnchor, constant: -8),
-            
+
             fridaVersionLabel.topAnchor.constraint(equalTo: fridaMenuImageView.bottomAnchor, constant: 24),
             fridaVersionLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            
+
             fridaStatusLabel.topAnchor.constraint(equalTo: fridaVersionLabel.bottomAnchor, constant: 24),
             fridaStatusLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-                        
+
             stackView.topAnchor.constraint(equalTo: fridaStatusLabel.bottomAnchor, constant: 24),
             stackView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 24),
             stackView.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -24),
             stackView.heightAnchor.constraint(equalToConstant: 50),
-
-            manageVersionsButton.topAnchor.constraint(equalTo: stackView.bottomAnchor, constant: 16),
-            manageVersionsButton.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 24),
-            manageVersionsButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -24),
-            manageVersionsButton.heightAnchor.constraint(equalToConstant: 50),
         ])
     }
 }
