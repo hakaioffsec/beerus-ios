@@ -26,10 +26,6 @@ final class Alert {
     ) {
         let alert = UIAlertController(title: title, message: message, preferredStyle: .alert)
 
-<<<<<<< HEAD
-        // Campo de texto
-=======
->>>>>>> ae68300 (feat: add script editor, and frida integration)
         alert.addTextField { textField in
             textField.placeholder = placeholder
             textField.keyboardType = keyboardType
@@ -101,6 +97,15 @@ final class Alert {
             }
         }
     }
+}
 
+// MARK: - UIViewController Extension
 
+extension UIViewController {
+
+    func showAlert(title: String, message: String) {
+        let alert = UIAlertController(title: title, message: message, preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "OK", style: .default))
+        present(alert, animated: true)
+    }
 }

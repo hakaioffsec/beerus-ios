@@ -12,6 +12,7 @@ enum TabOption: String, CaseIterable {
     case scriptEditor = "Script Editor"
     case appStore = "App Store"
     case jailbreakBypass = "Cloak"
+    case sandboxExfiltration = "Sandbox Exf/"
 
     var icon: String {
         switch self {
@@ -26,6 +27,7 @@ enum TabOption: String, CaseIterable {
         case .scriptEditor: return "scroll"
         case .appStore: return "cart.fill"
         case .jailbreakBypass: return "shield.slash"
+        case .sandboxExfiltration: return "shippingbox.fill"
         }
     }
 
@@ -54,6 +56,9 @@ enum TabOption: String, CaseIterable {
                 .withRenderingMode(.alwaysTemplate)
         case .jailbreakBypass:
             return UIImage(systemName: "shield.slash.fill")?
+                .withRenderingMode(.alwaysTemplate)
+        case .sandboxExfiltration:
+            return UIImage(systemName: "shippingbox.fill")?
                 .withRenderingMode(.alwaysTemplate)
         default:
             return UIImage(named: icon)?

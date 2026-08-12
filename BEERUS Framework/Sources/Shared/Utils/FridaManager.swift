@@ -77,8 +77,6 @@ final class FridaManager {
         )
     }
 
-<<<<<<< HEAD
-=======
     // MARK: - Script Execution
 
     func beginScript(source: String, pid: UInt) async throws -> ScriptSession {
@@ -109,7 +107,6 @@ final class FridaManager {
         }
     }
 
->>>>>>> ae68300 (feat: add script editor, and frida integration)
     // MARK: - Private
 
     private func getDevice() async throws -> Device {
@@ -328,8 +325,6 @@ struct MemoryDumpResult {
     let errors: Int
 }
 
-<<<<<<< HEAD
-=======
 final class ScriptSession {
     let rawMessages: AsyncStream<String>
     private let _stop: () async -> Void
@@ -342,7 +337,6 @@ final class ScriptSession {
     func finish() async { await _stop() }
 }
 
->>>>>>> ae68300 (feat: add script editor, and frida integration)
 enum FridaError: LocalizedError {
     case attachFailed, timeout, dumpFailed, memoryDumpFailed, rpcError(String)
 

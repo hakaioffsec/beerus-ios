@@ -1,5 +1,5 @@
 import Foundation
-  
+
 
 class AppManager {
     struct AppInfo {
@@ -7,19 +7,38 @@ class AppManager {
         let caminho: String
         let icone: String
         let plists: [String]
+        let dataContainer: String
     }
-    
+
+    private func getDataContainerURLs() -> [String: String] {
+        var containers: [String: String] = [:]
+
+        guard let workspaceClass = NSClassFromString("LSApplicationWorkspace") as? NSObject.Type,
+              let workspace = workspaceClass.perform(NSSelectorFromString("defaultWorkspace"))?.takeUnretainedValue(),
+              let apps = workspace.perform(NSSelectorFromString("allInstalledApplications"))?.takeUnretainedValue() as? [NSObject]
+        else {
+            return containers
+        }
+
+        for app in apps {
+            guard let bundleId = app.perform(NSSelectorFromString("bundleIdentifier"))?.takeUnretainedValue() as? String,
+                  let dataURL = app.perform(NSSelectorFromString("dataContainerURL"))?.takeUnretainedValue() as? URL
+            else { continue }
+
+            containers[bundleId] = dataURL.path
+        }
+
+        return containers
+    }
+
     func getApps() -> [String: AppInfo] {
         let appDirectory = "/private/var/containers/Bundle/Application/"
         let fileManager = FileManager.default
         var result: [String: AppInfo] = [:]
+        let dataContainers = getDataContainerURLs()
 
         guard let appUUIDs = try? fileManager.contentsOfDirectory(atPath: appDirectory) else {
-<<<<<<< HEAD
-            print("Erro ao acessar o diretório de aplicativos.")
-=======
             print("Failed to access app directory.")
->>>>>>> ae68300 (feat: add script editor, and frida integration)
             return result
         }
 
@@ -28,7 +47,7 @@ class AppManager {
             guard let contents = try? fileManager.contentsOfDirectory(atPath: uuidPath) else { continue }
 
             guard let appFolder = contents.first(where: { $0.hasSuffix(".app") }) else { continue }
-            
+
             let name = appFolder.components(separatedBy: ".app").first ?? ""
             let appPath = "\(uuidPath)/\(appFolder)"
             let plistPath = "\(appPath)/Info.plist"
@@ -57,7 +76,7 @@ class AppManager {
                     }
                 }
             }
-            
+
             var plistFiles: [String] = []
 
             if let fileEnum = fileManager.enumerator(atPath: appPath) {
@@ -73,7 +92,8 @@ class AppManager {
                 name: name,
                 caminho: appPath,
                 icone: iconPath,
-                plists: plistFiles
+                plists: plistFiles,
+                dataContainer: dataContainers[bundleId] ?? ""
             )
 
             result[bundleId] = appInfo

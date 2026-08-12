@@ -37,11 +37,7 @@ final class Github {
                 
                 completion(versions)
             case .failure(let error):
-<<<<<<< HEAD
-                print("Erro:", error)
-=======
                 print("Error:", error)
->>>>>>> ae68300 (feat: add script editor, and frida integration)
                 completion(versions)
             }
         }
@@ -62,11 +58,7 @@ final class Github {
                 completion(isValid)
 
             case .failure(let error):
-<<<<<<< HEAD
-                print("Erro:", error)
-=======
                 print("Error:", error)
->>>>>>> ae68300 (feat: add script editor, and frida integration)
                 completion(false)
             }
         }

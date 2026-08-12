@@ -1,13 +1,13 @@
 CC = clang
 SDK = $(shell xcrun --sdk iphoneos --show-sdk-path)
 CFLAGS = -arch arm64 -isysroot $(SDK) -miphoneos-version-min=14.0 -O2 -Wall
-LIBS = -lproc
+LIBS = -lproc -lz
 FRAMEWORKS = -framework CoreFoundation
 
 all: beerusd
 
 beerusd: BeerusDaemon.c BeerusInjector.c MachOPatcher.c
-	$(CC) $(CFLAGS) $(LIBS) $(FRAMEWORKS) -o $@ BeerusDaemon.c BeerusInjector.c MachOPatcher.c
+	$(CC) $(CFLAGS) -o $@ BeerusDaemon.c BeerusInjector.c MachOPatcher.c $(FRAMEWORKS) $(LIBS)
 	ldid -Sent.plist $@
 
 clean:

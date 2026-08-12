@@ -44,22 +44,18 @@ final class ProcessListViewController: BaseViewController {
         activityIndicator.startAnimating()
         emptyLabel.isHidden = true
 
-        Task {
+        Task { @MainActor in
             do {
                 let allApps = try await FridaManager.shared.getInstalledApps()
                 let running = allApps.filter { $0.isRunning }
-                await MainActor.run {
-                    self.apps = running
-                    self.tableView.reloadData()
-                    self.activityIndicator.stopAnimating()
-                    self.emptyLabel.isHidden = !running.isEmpty
-                }
+                self.apps = running
+                self.tableView.reloadData()
+                self.activityIndicator.stopAnimating()
+                self.emptyLabel.isHidden = !running.isEmpty
             } catch {
-                await MainActor.run {
-                    self.activityIndicator.stopAnimating()
-                    self.showAlert(title: "Error",
-                                   message: "Failed to list processes:\n\(error.localizedDescription)")
-                }
+                self.activityIndicator.stopAnimating()
+                self.showAlert(title: "Error",
+                               message: "Failed to list processes:\n\(error.localizedDescription)")
             }
         }
     }

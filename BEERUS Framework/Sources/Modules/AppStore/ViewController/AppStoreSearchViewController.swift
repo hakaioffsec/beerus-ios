@@ -95,21 +95,17 @@ final class AppStoreSearchViewController: BaseViewController {
 
     private func performSearch(_ term: String) {
         spinner.startAnimating()
-        Task {
+        Task { @MainActor in
             do {
                 let apps = try await AppStoreService.shared.search(term: term)
-                await MainActor.run {
-                    spinner.stopAnimating()
-                    hasSearched = true
-                    results = apps
-                    tableView.backgroundView = apps.isEmpty ? emptyLabel : nil
-                    tableView.reloadData()
-                }
+                spinner.stopAnimating()
+                hasSearched = true
+                results = apps
+                tableView.backgroundView = apps.isEmpty ? emptyLabel : nil
+                tableView.reloadData()
             } catch {
-                await MainActor.run {
-                    spinner.stopAnimating()
-                    showAlert(title: "Search Failed", message: error.localizedDescription)
-                }
+                spinner.stopAnimating()
+                showAlert(title: "Search Failed", message: error.localizedDescription)
             }
         }
     }

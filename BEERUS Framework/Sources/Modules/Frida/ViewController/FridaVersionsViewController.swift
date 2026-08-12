@@ -124,23 +124,26 @@ final class FridaVersionsViewController: UIViewController {
         uninstallButton.isEnabled = false
         uninstallButton.setTitle("Uninstalling...", for: .normal)
 
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+        DispatchQueue.global(qos: .userInitiated).async {
             let result = RootExec.uninstallFrida()
             let success = result?.hasPrefix("ok") == true
-
-            DispatchQueue.main.async {
-                self?.uninstallButton.isEnabled = true
-                self?.uninstallButton.setTitle("Uninstall Frida", for: .normal)
-
-                if success {
-                    self?.cellStatuses.removeAll()
-                    self?.tableView.reloadData()
-                    FridaChecker.notifyStatusChanged()
-                    self?.showAlert(title: "Done", message: "frida-server has been uninstalled.")
-                } else {
-                    self?.showAlert(title: "Failed", message: result ?? "No response from daemon")
-                }
+            DispatchQueue.main.async { [weak self] in
+                self?.handleUninstallResult(success: success, result: result)
             }
+        }
+    }
+
+    private func handleUninstallResult(success: Bool, result: String?) {
+        uninstallButton.isEnabled = true
+        uninstallButton.setTitle("Uninstall Frida", for: .normal)
+
+        if success {
+            cellStatuses.removeAll()
+            tableView.reloadData()
+            FridaChecker.notifyStatusChanged()
+            showAlert(title: "Done", message: "frida-server has been uninstalled.")
+        } else {
+            showAlert(title: "Failed", message: result ?? "No response from daemon")
         }
     }
 
@@ -220,28 +223,30 @@ final class FridaVersionsViewController: UIViewController {
         cellStatuses[index] = .installing
         reloadCell(at: index)
 
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+        DispatchQueue.global(qos: .userInitiated).async {
             let result = RootExec.installFrida(from: filePath)
             let success = result?.hasPrefix("ok") == true
-
-            DispatchQueue.main.async {
-                if success {
-                    for (key, value) in self?.cellStatuses ?? [:] {
-                        if case .installed = value { self?.cellStatuses[key] = .none }
-                    }
-                    self?.cellStatuses[index] = .installed
-                    self?.tableView.reloadData()
-                    FridaChecker.notifyStatusChanged()
-                    // ponytail: cleanup after successful install
-                    try? FileManager.default.removeItem(atPath: filePath)
-                } else {
-                    self?.cellStatuses[index] = .failed("Install failed")
-                    self?.reloadCell(at: index)
-                    self?.showAlert(title: "Install Failed", message: result ?? "No response from daemon")
-                }
-                self?.downloadingIndex = nil
+            DispatchQueue.main.async { [weak self] in
+                self?.handleInstallResult(success: success, result: result, index: index, filePath: filePath)
             }
         }
+    }
+
+    private func handleInstallResult(success: Bool, result: String?, index: Int, filePath: String) {
+        if success {
+            for (key, value) in cellStatuses {
+                if case .installed = value { cellStatuses[key] = .none }
+            }
+            cellStatuses[index] = .installed
+            tableView.reloadData()
+            FridaChecker.notifyStatusChanged()
+            try? FileManager.default.removeItem(atPath: filePath)
+        } else {
+            cellStatuses[index] = .failed("Install failed")
+            reloadCell(at: index)
+            showAlert(title: "Install Failed", message: result ?? "No response from daemon")
+        }
+        downloadingIndex = nil
     }
 
     // MARK: - Helpers

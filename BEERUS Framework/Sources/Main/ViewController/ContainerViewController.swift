@@ -22,6 +22,7 @@ final class ContainerViewController: UIViewController {
     private lazy var plistReaderViewController = PlistReaderViewController()
     private lazy var scriptListViewController = ScriptListViewController()
     private lazy var jailbreakBypassViewController = JailbreakBypassViewController()
+    private lazy var sandboxExfiltrationViewController = SandboxExfiltrationViewController()
     // ponytail: computed property so it checks auth each time, not lazy
     private var appStoreViewController: UIViewController {
         if AppStoreCredentialManager.hasStoredAccount {
@@ -96,6 +97,7 @@ extension ContainerViewController: ViewCode {
         plistReaderViewController.menuDelegate = self
         scriptListViewController.menuDelegate = self
         jailbreakBypassViewController.menuDelegate = self
+        sandboxExfiltrationViewController.menuDelegate = self
         sideMenuView.delegate = self
     }
 
@@ -195,6 +197,8 @@ extension ContainerViewController: SideMenuViewDelegate {
             show(viewController: appStoreViewController)
         case .jailbreakBypass:
             show(viewController: jailbreakBypassViewController)
+        case .sandboxExfiltration:
+            show(viewController: sandboxExfiltrationViewController)
         }
     }
 
