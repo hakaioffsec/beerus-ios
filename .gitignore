@@ -72,7 +72,3 @@ docs/superpowers/
 *.o
 *.dylib
 Daemon/beerusd
-BeerusCloak/*.o
-BeerusCloak/*.dylib
-SpawnHook/*.o
-SpawnHook/*.dylib

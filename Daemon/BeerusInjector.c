@@ -25,7 +25,6 @@ static char g_dylib_path[512] = {0};
 static volatile int g_watcher_active = 0;
 
 #define ALLOWLIST_PATH "/var/mobile/.beerus_jb_allowlist"
-#define BYPASS_TOGGLE "/var/mobile/.beerus_jb_bypass"
 
 // ARM64 shellcode to call dlopen(path, RTLD_NOW)
 // Registers on entry:
@@ -434,11 +433,6 @@ int injector_start_watcher(const char *dylib_path) {
     strncpy(g_dylib_path, dylib_path, sizeof(g_dylib_path) - 1);
 
     struct stat st;
-    if (stat(BYPASS_TOGGLE, &st) != 0) {
-        fprintf(stderr, "injector: bypass not enabled\n");
-        return -1;
-    }
-
     if (stat(dylib_path, &st) != 0) {
         fprintf(stderr, "injector: dylib not found: %s\n", dylib_path);
         return -1;
