@@ -29,30 +29,16 @@ enum RootExec {
         }
     }
 
-    // JB Bypass commands
-    static func jbBypassOn() -> String?     { send("JB_BYPASS_ON") }
-    static func jbBypassOff() -> String?    { send("JB_BYPASS_OFF") }
-    static func jbBypassStatus() -> String? { send("JB_BYPASS_STATUS") }
-
     // Injector commands
     static func injectorStart() -> String?  { send("INJECT_START") }
     static func injectorStop() -> String?   { send("INJECT_STOP") }
     static func injectPid(_ pid: Int) -> String? { send("INJECT_PID \(pid)") }
     static func injectApp(_ bundleId: String) -> String? { send("INJECT_APP \(bundleId)") }
     static func injectAll() -> String? { send("INJECT_ALL") }
-    static func injectLaunchd() -> String? { send("INJECT_LAUNCHD") }
 
     // Binary patching commands
     static func patchApp(_ bundleId: String) -> String? { send("PATCH_APP \(bundleId)") }
     static func unpatchApp(_ bundleId: String) -> String? { send("UNPATCH_APP \(bundleId)") }
-
-    // Allowlist commands
-    static func allowlistAdd(_ bundleId: String) -> String? { send("JB_ALLOWLIST_ADD \(bundleId)") }
-    static func allowlistRemove(_ bundleId: String) -> String? { send("JB_ALLOWLIST_REMOVE \(bundleId)") }
-    static func allowlistGet() -> String? { send("JB_ALLOWLIST_GET") }
-
-    // Launch with Cloak - opens app with bypass dylib injected
-    static func launchWithCloak(_ bundleId: String) -> String? { send("JB_LAUNCH_CLOAKED \(bundleId)") }
 
     // MARK: - Shell (streaming)
 

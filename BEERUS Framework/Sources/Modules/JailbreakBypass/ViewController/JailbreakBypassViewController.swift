@@ -2,50 +2,138 @@ import UIKit
 
 final class JailbreakBypassViewController: BaseViewController {
 
-    struct AppInfo {
-        let bundleId: String
-        let name: String
-        var isBypassed: Bool
+    // MARK: - Constants
+
+    private enum Constants {
+        static let cellIdentifier = "AppCell"
     }
 
+    // MARK: - Models
+
+    private struct AppInfo {
+        let bundleId: String
+        let name: String
+        var isEnabled: Bool
+    }
+
+    // MARK: - Properties
+
     private var apps: [AppInfo] = []
-    private var filtered: [AppInfo] = []
-    private var allowedBundleIds: Set<String> = []
-    private let selfBundleId = Bundle.main.bundleIdentifier ?? "io.hakaisecurity.BEERUS-Framework"
+    private var filteredApps: [AppInfo] = []
+    private let service = ShadowService.shared
     private var isSearching: Bool { !(searchBar.text?.isEmpty ?? true) }
+    private var displayedApps: [AppInfo] { isSearching ? filteredApps : apps }
 
-    // MARK: - UI
+    // MARK: - Circuit Images
 
-    private lazy var mainToggle: UISwitch = {
-        let s = UISwitch()
-        s.onTintColor = .systemGreen
-        s.addTarget(self, action: #selector(mainToggleChanged), for: .valueChanged)
-        return s
+    private lazy var circuitTopImageView: UIImageView = {
+        let imageView = UIImageView.circuit(named: "circuit-top")
+        imageView.translatesAutoresizingMaskIntoConstraints = false
+        return imageView
+    }()
+
+    private lazy var circuitRightImageView: UIImageView = {
+        let imageView = UIImageView.circuit(named: "circuit-right")
+        imageView.translatesAutoresizingMaskIntoConstraints = false
+        return imageView
+    }()
+
+    private lazy var circuitLeftImageView: UIImageView = {
+        let imageView = UIImageView.circuit(named: "circuit-left-2")
+        imageView.translatesAutoresizingMaskIntoConstraints = false
+        return imageView
+    }()
+
+    private lazy var circuitLeftDownImageView: UIImageView = {
+        let imageView = UIImageView.circuit(named: "circuit-left-down")
+        imageView.translatesAutoresizingMaskIntoConstraints = false
+        return imageView
+    }()
+
+    // MARK: - UI Components
+
+    private lazy var headerView: UIView = {
+        let view = UIView()
+        view.translatesAutoresizingMaskIntoConstraints = false
+        view.backgroundColor = UIColor(named: "ContainerBackground")
+        view.layer.cornerRadius = 12
+        return view
+    }()
+
+    private lazy var titleLabel: UILabel = UILabel.styled(
+        text: "Shadow JB Bypass",
+        font: AppFont.bold(18),
+        alignment: .left
+    )
+
+    private lazy var statusLabel: UILabel = UILabel.styled(
+        text: "Checking...",
+        font: AppFont.regular(14),
+        color: .secondaryLabel,
+        alignment: .left
+    )
+
+    private lazy var versionButton: UIButton = {
+        let button = UIButton(type: .system)
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.setTitle("Select Version", for: .normal)
+        button.titleLabel?.font = AppFont.regular(14)
+        button.setTitleColor(.systemBlue, for: .normal)
+        button.addTarget(self, action: #selector(versionTapped), for: .touchUpInside)
+        return button
+    }()
+
+    private lazy var installButton: UIButton = {
+        let button = UIButton(type: .system)
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.titleLabel?.font = AppFont.bold(16)
+        button.setTitleColor(.white, for: .normal)
+        button.layer.cornerRadius = 8
+        button.addTarget(self, action: #selector(installTapped), for: .touchUpInside)
+        return button
+    }()
+
+    private lazy var respringButton: UIButton = {
+        let button = UIButton(type: .system)
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.setTitle("Respring", for: .normal)
+        button.titleLabel?.font = AppFont.regular(14)
+        button.setTitleColor(.systemOrange, for: .normal)
+        button.addTarget(self, action: #selector(respringTapped), for: .touchUpInside)
+        return button
+    }()
+
+    private lazy var activityIndicator: UIActivityIndicatorView = {
+        let indicator = UIActivityIndicatorView(style: .medium)
+        indicator.translatesAutoresizingMaskIntoConstraints = false
+        indicator.hidesWhenStopped = true
+        return indicator
     }()
 
     private lazy var searchBar: UISearchBar = {
-        let sb = UISearchBar()
-        sb.translatesAutoresizingMaskIntoConstraints = false
-        sb.placeholder = "Search apps"
-        sb.searchBarStyle = .minimal
-        sb.delegate = self
-        sb.searchTextField.textColor = .label
-        sb.searchTextField.backgroundColor = UIColor(named: "ContainerBackground")
-        return sb
+        let searchBar = UISearchBar()
+        searchBar.translatesAutoresizingMaskIntoConstraints = false
+        searchBar.placeholder = "Search apps"
+        searchBar.searchBarStyle = .minimal
+        searchBar.delegate = self
+        searchBar.searchTextField.textColor = .label
+        searchBar.searchTextField.backgroundColor = UIColor(named: "ContainerBackground")
+        return searchBar
     }()
 
     private lazy var tableView: UITableView = {
-        let tv = UITableView(frame: .zero, style: .grouped)
-        tv.translatesAutoresizingMaskIntoConstraints = false
-        tv.backgroundColor = .clear
-        tv.separatorColor = .separator
-        tv.delegate = self
-        tv.dataSource = self
-        tv.register(UITableViewCell.self, forCellReuseIdentifier: "Cell")
-        tv.rowHeight = 44
-        tv.keyboardDismissMode = .onDrag
-        tv.sectionHeaderTopPadding = 0
-        return tv
+        let tableView = UITableView(frame: .zero, style: .plain)
+        tableView.translatesAutoresizingMaskIntoConstraints = false
+        tableView.backgroundColor = .clear
+        tableView.separatorStyle = .singleLine
+        tableView.separatorColor = UIColor.white.withAlphaComponent(0.2)
+        tableView.separatorInset = UIEdgeInsets(top: 0, left: 16, bottom: 0, right: 16)
+        tableView.delegate = self
+        tableView.dataSource = self
+        tableView.register(UITableViewCell.self, forCellReuseIdentifier: Constants.cellIdentifier)
+        tableView.rowHeight = 50
+        tableView.keyboardDismissMode = .onDrag
+        return tableView
     }()
 
     // MARK: - Lifecycle
@@ -53,263 +141,303 @@ final class JailbreakBypassViewController: BaseViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         applyViewCode()
-        loadData()
+        updateUI()
+        fetchVersions()
     }
 
-    // MARK: - Data
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        updateUI()
+    }
 
-    private var displayedApps: [AppInfo] { isSearching ? filtered : apps }
+    // MARK: - Data Loading
 
-    private func loadData() {
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let allowlist = self?.loadAllowlist() ?? []
-            let apps = self?.loadInstalledApps() ?? []
+    private func fetchVersions() {
+        versionButton.setTitle("Loading...", for: .normal)
+        versionButton.isEnabled = false
 
-            DispatchQueue.main.async {
-                guard let self else { return }
-                self.allowedBundleIds = Set(allowlist)
+        service.fetchReleases { [weak self] result in
+            guard let self = self else { return }
+            self.versionButton.isEnabled = true
 
-                if !self.allowedBundleIds.contains(self.selfBundleId) {
-                    _ = RootExec.allowlistAdd(self.selfBundleId)
-                    self.allowedBundleIds.insert(self.selfBundleId)
+            switch result {
+            case .success(let releases):
+                if let selected = self.service.selectedRelease {
+                    self.versionButton.setTitle("Version: \(selected.version)", for: .normal)
+                } else if releases.isEmpty {
+                    self.versionButton.setTitle("No versions found", for: .normal)
                 }
-
-                self.apps = apps.map { app in
-                    AppInfo(bundleId: app.bundleId, name: app.name, isBypassed: !self.allowedBundleIds.contains(app.bundleId))
-                }.sorted { $0.name.lowercased() < $1.name.lowercased() }
-
-                self.checkBypassStatus()
-                self.tableView.reloadData()
+            case .failure:
+                self.versionButton.setTitle("Failed to load", for: .normal)
             }
         }
     }
 
-    private func loadAllowlist() -> [String] {
-        guard let response = RootExec.allowlistGet() else { return [] }
-        return response.replacingOccurrences(of: "allowlist:", with: "")
-            .split(separator: " ").map(String.init).filter { !$0.isEmpty }
+    private func loadApps() {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+            let enabledApps = Set(self.service.getEnabledApps())
+            let installedApps = self.loadInstalledApps()
+
+            let appInfos = installedApps.map { app in
+                AppInfo(
+                    bundleId: app.bundleId,
+                    name: app.name,
+                    isEnabled: enabledApps.contains(app.bundleId)
+                )
+            }.sorted { $0.name.lowercased() < $1.name.lowercased() }
+
+            DispatchQueue.main.async {
+                self.apps = appInfos
+                self.tableView.reloadData()
+            }
+        }
     }
 
     private func loadInstalledApps() -> [(bundleId: String, name: String)] {
         var result: [(String, String)] = []
         var seen = Set<String>()
 
-        func add(_ plist: String, fallback: String) {
-            guard let data = FileManager.default.contents(atPath: plist),
-                  let p = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
-                  let bid = p["CFBundleIdentifier"] as? String, !seen.contains(bid) else { return }
-            seen.insert(bid)
-            let name = (p["CFBundleDisplayName"] ?? p["CFBundleName"]) as? String ?? fallback
-            result.append((bid, name))
+        func addApp(from plistPath: String, fallbackName: String) {
+            guard let data = FileManager.default.contents(atPath: plistPath),
+                  let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
+                  let bundleId = plist["CFBundleIdentifier"] as? String,
+                  !seen.contains(bundleId) else { return }
+
+            seen.insert(bundleId)
+            let name = (plist["CFBundleDisplayName"] ?? plist["CFBundleName"]) as? String ?? fallbackName
+            result.append((bundleId, name))
         }
 
-        func scan(_ path: String, nested: Bool = true) {
+        func scanDirectory(_ path: String, nested: Bool = true) {
             guard let items = try? FileManager.default.contentsOfDirectory(atPath: path) else { return }
+
             for item in items {
-                let full = "\(path)/\(item)"
+                let fullPath = "\(path)/\(item)"
+
                 if item.hasSuffix(".app") {
-                    add("\(full)/Info.plist", fallback: item.replacingOccurrences(of: ".app", with: ""))
-                } else if nested, let sub = try? FileManager.default.contentsOfDirectory(atPath: full) {
-                    for s in sub where s.hasSuffix(".app") {
-                        add("\(full)/\(s)/Info.plist", fallback: s.replacingOccurrences(of: ".app", with: ""))
+                    addApp(from: "\(fullPath)/Info.plist", fallbackName: item.replacingOccurrences(of: ".app", with: ""))
+                } else if nested, let subItems = try? FileManager.default.contentsOfDirectory(atPath: fullPath) {
+                    for subItem in subItems where subItem.hasSuffix(".app") {
+                        addApp(from: "\(fullPath)/\(subItem)/Info.plist", fallbackName: subItem.replacingOccurrences(of: ".app", with: ""))
                     }
                 }
             }
         }
 
-        scan("/var/containers/Bundle/Application")
-        scan("/Applications", nested: false)
-        scan("/var/jb/Applications", nested: false)
+        scanDirectory("/var/containers/Bundle/Application")
+        scanDirectory("/Applications", nested: false)
+        scanDirectory("/var/jb/Applications", nested: false)
+
         return result
     }
 
-    private func checkBypassStatus() {
-        let active = RootExec.jbBypassStatus()?.contains("toggle_file=1") ?? false
-        mainToggle.isOn = active
+    // MARK: - UI Updates
+
+    private func updateUI() {
+        let installed = service.isInstalled
+
+        if installed {
+            statusLabel.text = "Shadow is installed"
+            statusLabel.textColor = .systemGreen
+            installButton.setTitle("Uninstall Shadow", for: .normal)
+            installButton.backgroundColor = .systemRed
+            versionButton.isHidden = true
+            respringButton.isHidden = false
+            searchBar.isHidden = false
+            tableView.isHidden = false
+            loadApps()
+        } else {
+            statusLabel.text = "Shadow is not installed"
+            statusLabel.textColor = .systemOrange
+            installButton.setTitle("Install Shadow", for: .normal)
+            installButton.backgroundColor = .systemBlue
+            versionButton.isHidden = false
+            respringButton.isHidden = true
+            searchBar.isHidden = true
+            tableView.isHidden = true
+        }
     }
 
     // MARK: - Actions
 
-    @objc private func mainToggleChanged() {
-        let on = mainToggle.isOn
-        mainToggle.isEnabled = false
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let ok = (on ? RootExec.jbBypassOn() : RootExec.jbBypassOff())?.hasPrefix("ok:") ?? false
-            DispatchQueue.main.async {
-                if !ok { self?.mainToggle.isOn = !on }
-                self?.mainToggle.isEnabled = true
-            }
+    @objc private func versionTapped() {
+        let releases = service.availableReleases
+        guard !releases.isEmpty else {
+            fetchVersions()
+            return
         }
-    }
 
-    private func toggle(_ bundleId: String) {
-        guard bundleId != selfBundleId, let i = apps.firstIndex(where: { $0.bundleId == bundleId }) else { return }
-        let bypass = !apps[i].isBypassed
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let ok = (bypass ? RootExec.allowlistRemove(bundleId) : RootExec.allowlistAdd(bundleId))?.hasPrefix("ok:") ?? false
-            DispatchQueue.main.async {
-                guard let self, ok else { return }
-                self.apps[i].isBypassed = bypass
-                if self.isSearching, let fi = self.filtered.firstIndex(where: { $0.bundleId == bundleId }) {
-                    self.filtered[fi].isBypassed = bypass
-                }
-                self.tableView.reloadData()
-            }
+        let alert = UIAlertController(title: "Select Version", message: nil, preferredStyle: .actionSheet)
+
+        for release in releases.prefix(10) {
+            let isSelected = service.selectedRelease?.version == release.version
+            let title = isSelected ? "\(release.version) ✓" : release.version
+
+            alert.addAction(UIAlertAction(title: title, style: .default) { [weak self] _ in
+                self?.service.selectRelease(release)
+                self?.versionButton.setTitle("Version: \(release.version)", for: .normal)
+            })
         }
-    }
-}
-
-// MARK: - TableView
-
-extension JailbreakBypassViewController: UITableViewDelegate, UITableViewDataSource {
-
-    func numberOfSections(in tableView: UITableView) -> Int { 2 }
-
-    func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        section == 0 ? 1 : displayedApps.count
-    }
-
-    func tableView(_ tableView: UITableView, viewForHeaderInSection section: Int) -> UIView? {
-        guard section == 1 else { return nil }
-        let container = UIView()
-        container.addSubview(searchBar)
-        searchBar.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            searchBar.topAnchor.constraint(equalTo: container.topAnchor),
-            searchBar.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            searchBar.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            searchBar.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-        ])
-        return container
-    }
-
-    func tableView(_ tableView: UITableView, heightForHeaderInSection section: Int) -> CGFloat {
-        section == 0 ? 0 : 44
-    }
-
-    func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
-        let cell = tableView.dequeueReusableCell(withIdentifier: "Cell", for: indexPath)
-        cell.backgroundColor = UIColor(named: "ContainerBackground")
-        cell.selectionStyle = .none
-        cell.textLabel?.textColor = .label
-        cell.textLabel?.font = .systemFont(ofSize: 15)
-
-        if indexPath.section == 0 {
-            cell.textLabel?.text = "Enable"
-            cell.accessoryView = mainToggle
-        } else {
-            let app = displayedApps[indexPath.row]
-            let locked = app.bundleId == selfBundleId
-
-            cell.textLabel?.text = app.name
-            cell.textLabel?.alpha = locked ? 0.5 : 1.0
-
-            // ponytail: reuse UISwitch if already present
-            let sw = (cell.accessoryView as? UISwitch) ?? UISwitch()
-            sw.isOn = app.isBypassed
-            sw.onTintColor = .systemGreen
-            sw.isEnabled = !locked
-            sw.tag = indexPath.row
-            sw.removeTarget(nil, action: nil, for: .valueChanged)
-            sw.addTarget(self, action: #selector(appToggled(_:)), for: .valueChanged)
-            cell.accessoryView = sw
-        }
-        return cell
-    }
-
-    @objc private func appToggled(_ s: UISwitch) { toggle(displayedApps[s.tag].bundleId) }
-
-    func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
-        guard indexPath.section == 1 else { return }
-        let app = displayedApps[indexPath.row]
-        showAppActions(app)
-    }
-
-    private func showAppActions(_ app: AppInfo) {
-        let alert = UIAlertController(title: app.name, message: app.bundleId, preferredStyle: .actionSheet)
-
-        alert.addAction(UIAlertAction(title: "Launch with Cloak", style: .default) { [weak self] _ in
-            self?.launchWithCloak(app.bundleId)
-        })
-
-        alert.addAction(UIAlertAction(title: "Launch Normal", style: .default) { _ in
-            RootExec.openApp(app.bundleId)
-        })
-
-        let bypassTitle = app.isBypassed ? "Disable Bypass" : "Enable Bypass"
-        alert.addAction(UIAlertAction(title: bypassTitle, style: .default) { [weak self] _ in
-            self?.toggle(app.bundleId)
-        })
 
         alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
 
         if let popover = alert.popoverPresentationController {
-            popover.sourceView = view
-            popover.sourceRect = CGRect(x: view.bounds.midX, y: view.bounds.midY, width: 0, height: 0)
+            popover.sourceView = versionButton
+            popover.sourceRect = versionButton.bounds
         }
 
         present(alert, animated: true)
     }
 
-    private func launchWithCloak(_ bundleId: String) {
-        let hud = showLoadingHUD(message: "Launching...")
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let result = RootExec.launchWithCloak(bundleId)
-            DispatchQueue.main.async {
-                hud.removeFromSuperview()
-                if result?.hasPrefix("ok:") != true {
-                    self?.showAlert(title: "Error", message: result ?? "Failed to launch")
-                }
+    @objc private func installTapped() {
+        if service.isInstalled {
+            confirmUninstall()
+        } else {
+            performInstall()
+        }
+    }
+
+    @objc private func respringTapped() {
+        showRespringPrompt()
+    }
+
+    // MARK: - Install/Uninstall
+
+    private func performInstall() {
+        installButton.isEnabled = false
+        activityIndicator.startAnimating()
+
+        service.install { [weak self] status in
+            self?.statusLabel.text = status
+        } completion: { [weak self] result in
+            guard let self = self else { return }
+
+            self.installButton.isEnabled = true
+            self.activityIndicator.stopAnimating()
+            self.updateUI()
+
+            switch result {
+            case .success:
+                self.showRespringPrompt()
+            case .failure(let error):
+                self.showAlert(title: "Error", message: error.localizedDescription)
             }
         }
     }
 
-    private func showLoadingHUD(message: String) -> UIView {
-        let hud = UIView(frame: view.bounds)
-        hud.backgroundColor = UIColor.black.withAlphaComponent(0.5)
-
-        let container = UIView()
-        container.backgroundColor = UIColor(named: "ContainerBackground")
-        container.layer.cornerRadius = 12
-        container.translatesAutoresizingMaskIntoConstraints = false
-
-        let spinner = UIActivityIndicatorView(style: .large)
-        spinner.startAnimating()
-        spinner.translatesAutoresizingMaskIntoConstraints = false
-
-        let label = UILabel()
-        label.text = message
-        label.textColor = .label
-        label.font = .systemFont(ofSize: 14)
-        label.translatesAutoresizingMaskIntoConstraints = false
-
-        container.addSubview(spinner)
-        container.addSubview(label)
-        hud.addSubview(container)
-        view.addSubview(hud)
-
-        NSLayoutConstraint.activate([
-            container.centerXAnchor.constraint(equalTo: hud.centerXAnchor),
-            container.centerYAnchor.constraint(equalTo: hud.centerYAnchor),
-            container.widthAnchor.constraint(equalToConstant: 120),
-            container.heightAnchor.constraint(equalToConstant: 100),
-            spinner.centerXAnchor.constraint(equalTo: container.centerXAnchor),
-            spinner.topAnchor.constraint(equalTo: container.topAnchor, constant: 20),
-            label.centerXAnchor.constraint(equalTo: container.centerXAnchor),
-            label.topAnchor.constraint(equalTo: spinner.bottomAnchor, constant: 12),
-        ])
-
-        return hud
+    private func confirmUninstall() {
+        let alert = UIAlertController(title: "Uninstall Shadow?", message: nil, preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        alert.addAction(UIAlertAction(title: "Uninstall", style: .destructive) { [weak self] _ in
+            self?.performUninstall()
+        })
+        present(alert, animated: true)
     }
 
+    private func performUninstall() {
+        installButton.isEnabled = false
+        activityIndicator.startAnimating()
+
+        service.uninstall { [weak self] result in
+            guard let self = self else { return }
+
+            self.installButton.isEnabled = true
+            self.activityIndicator.stopAnimating()
+            self.updateUI()
+
+            switch result {
+            case .success:
+                self.showRespringPrompt()
+            case .failure(let error):
+                self.showAlert(title: "Error", message: error.localizedDescription)
+            }
+        }
+    }
+
+    private func showRespringPrompt() {
+        let alert = UIAlertController(
+            title: "Respring Required",
+            message: "A respring is needed to apply changes.",
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(title: "Later", style: .cancel))
+        alert.addAction(UIAlertAction(title: "Respring Now", style: .destructive) { [weak self] _ in
+            self?.service.respring()
+        })
+        present(alert, animated: true)
+    }
+
+    // MARK: - App Toggle
+
+    private func toggleApp(at indexPath: IndexPath) {
+        let app = displayedApps[indexPath.row]
+        let shouldEnable = !app.isEnabled
+        let bundleId = app.bundleId
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let success = shouldEnable
+                ? self?.service.enableBypass(for: bundleId) ?? false
+                : self?.service.disableBypass(for: bundleId) ?? false
+
+            DispatchQueue.main.async {
+                guard let self = self, success else { return }
+
+                if let index = self.apps.firstIndex(where: { $0.bundleId == bundleId }) {
+                    self.apps[index].isEnabled = shouldEnable
+                }
+                if self.isSearching, let index = self.filteredApps.firstIndex(where: { $0.bundleId == bundleId }) {
+                    self.filteredApps[index].isEnabled = shouldEnable
+                }
+
+                self.tableView.reloadRows(at: [indexPath], with: .none)
+            }
+        }
+    }
 }
 
-// MARK: - Search
+// MARK: - UITableViewDataSource & UITableViewDelegate
+
+extension JailbreakBypassViewController: UITableViewDelegate, UITableViewDataSource {
+
+    func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
+        displayedApps.count
+    }
+
+    func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
+        let cell = tableView.dequeueReusableCell(withIdentifier: Constants.cellIdentifier, for: indexPath)
+        let app = displayedApps[indexPath.row]
+
+        cell.backgroundColor = UIColor(named: "ContainerBackground")
+        cell.selectionStyle = .none
+        cell.textLabel?.textColor = .label
+        cell.textLabel?.font = AppFont.regular(15)
+        cell.textLabel?.text = app.name
+
+        let toggle = (cell.accessoryView as? UISwitch) ?? UISwitch()
+        toggle.isOn = app.isEnabled
+        toggle.onTintColor = .systemGreen
+        toggle.tag = indexPath.row
+        toggle.removeTarget(nil, action: nil, for: .valueChanged)
+        toggle.addTarget(self, action: #selector(appToggleChanged(_:)), for: .valueChanged)
+        cell.accessoryView = toggle
+
+        return cell
+    }
+
+    @objc private func appToggleChanged(_ sender: UISwitch) {
+        toggleApp(at: IndexPath(row: sender.tag, section: 0))
+    }
+}
+
+// MARK: - UISearchBarDelegate
 
 extension JailbreakBypassViewController: UISearchBarDelegate {
+
     func searchBar(_ searchBar: UISearchBar, textDidChange text: String) {
-        filtered = text.isEmpty ? [] : apps.filter {
-            $0.name.localizedCaseInsensitiveContains(text) || $0.bundleId.localizedCaseInsensitiveContains(text)
+        filteredApps = text.isEmpty ? [] : apps.filter {
+            $0.name.localizedCaseInsensitiveContains(text) ||
+            $0.bundleId.localizedCaseInsensitiveContains(text)
         }
         tableView.reloadData()
     }
@@ -318,13 +446,74 @@ extension JailbreakBypassViewController: UISearchBarDelegate {
 // MARK: - ViewCode
 
 extension JailbreakBypassViewController: ViewCode {
+
     func buildViewHierarchy() {
+        view.addSubview(circuitTopImageView)
+        view.addSubview(circuitRightImageView)
+        view.addSubview(circuitLeftImageView)
+        view.addSubview(circuitLeftDownImageView)
+
+        view.addSubview(headerView)
+        headerView.addSubview(titleLabel)
+        headerView.addSubview(statusLabel)
+        headerView.addSubview(versionButton)
+        headerView.addSubview(installButton)
+        headerView.addSubview(respringButton)
+        headerView.addSubview(activityIndicator)
+
+        view.addSubview(searchBar)
         view.addSubview(tableView)
     }
 
     func setupConstraints() {
         NSLayoutConstraint.activate([
-            tableView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            // Circuit images
+            circuitTopImageView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            circuitTopImageView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 32),
+
+            circuitRightImageView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            circuitRightImageView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            circuitRightImageView.widthAnchor.constraint(equalToConstant: 40),
+            circuitRightImageView.heightAnchor.constraint(equalTo: view.safeAreaLayoutGuide.heightAnchor),
+
+            circuitLeftImageView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            circuitLeftImageView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+
+            circuitLeftDownImageView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            circuitLeftDownImageView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+
+            // Header
+            headerView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 16),
+            headerView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+            headerView.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
+
+            titleLabel.topAnchor.constraint(equalTo: headerView.topAnchor, constant: 16),
+            titleLabel.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 16),
+
+            statusLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 4),
+            statusLabel.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 16),
+
+            versionButton.topAnchor.constraint(equalTo: statusLabel.bottomAnchor, constant: 12),
+            versionButton.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 16),
+
+            installButton.topAnchor.constraint(equalTo: versionButton.bottomAnchor, constant: 12),
+            installButton.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 16),
+            installButton.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -16),
+            installButton.heightAnchor.constraint(equalToConstant: 44),
+
+            respringButton.topAnchor.constraint(equalTo: installButton.bottomAnchor, constant: 8),
+            respringButton.centerXAnchor.constraint(equalTo: headerView.centerXAnchor),
+            respringButton.bottomAnchor.constraint(equalTo: headerView.bottomAnchor, constant: -16),
+
+            activityIndicator.centerYAnchor.constraint(equalTo: statusLabel.centerYAnchor),
+            activityIndicator.leadingAnchor.constraint(equalTo: statusLabel.trailingAnchor, constant: 8),
+
+            // Search & Table
+            searchBar.topAnchor.constraint(equalTo: headerView.bottomAnchor, constant: 16),
+            searchBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            searchBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+
+            tableView.topAnchor.constraint(equalTo: searchBar.bottomAnchor),
             tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
