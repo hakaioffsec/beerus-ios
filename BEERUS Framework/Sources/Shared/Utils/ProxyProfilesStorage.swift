@@ -13,14 +13,14 @@ final class ProxyProfilesStorage {
 
     private var fileURL: URL {
         let fileManager = FileManager.default
-        let appSupport = try! fileManager.url(
+        let base = (try? fileManager.url(
             for: .applicationSupportDirectory,
             in: .userDomainMask,
             appropriateFor: nil,
             create: true
-        )
+        )) ?? URL(fileURLWithPath: NSTemporaryDirectory())
 
-        let folder = appSupport.appendingPathComponent("BeerusFramework", isDirectory: true)
+        let folder = base.appendingPathComponent("BeerusFramework", isDirectory: true)
 
         if !fileManager.fileExists(atPath: folder.path) {
             try? fileManager.createDirectory(at: folder, withIntermediateDirectories: true)

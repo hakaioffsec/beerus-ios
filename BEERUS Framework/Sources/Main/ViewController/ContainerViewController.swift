@@ -23,23 +23,33 @@ final class ContainerViewController: UIViewController {
     private lazy var scriptListViewController = ScriptListViewController()
     private lazy var jailbreakBypassViewController = JailbreakBypassViewController()
     private lazy var sandboxExfiltrationViewController = SandboxExfiltrationViewController()
-    // ponytail: computed property so it checks auth each time, not lazy
-    private var appStoreViewController: UIViewController {
-        if AppStoreCredentialManager.hasStoredAccount {
-            let vc = AppStoreSearchViewController()
-            vc.menuDelegate = self
-            return vc
-        } else {
+    // Cached once the user is authenticated, so leaving the tab and coming back doesn't throw away
+    // an already-loaded search screen (auth is still re-checked on every visit via
+    // resolveAppStoreViewController(), only the authenticated search screen itself is preserved).
+    private var cachedAppStoreSearchVC: AppStoreSearchViewController?
+
+    private func resolveAppStoreViewController() -> UIViewController {
+        guard AppStoreCredentialManager.hasStoredAccount else {
             let loginVC = AppStoreLoginViewController()
             loginVC.menuDelegate = self
             loginVC.onLoginSuccess = { [weak self] _ in
                 guard let self else { return }
                 let searchVC = AppStoreSearchViewController()
                 searchVC.menuDelegate = self
+                self.cachedAppStoreSearchVC = searchVC
                 self.navController?.setViewControllers([searchVC], animated: true)
             }
             return loginVC
         }
+
+        if let cached = cachedAppStoreSearchVC {
+            return cached
+        }
+
+        let searchVC = AppStoreSearchViewController()
+        searchVC.menuDelegate = self
+        cachedAppStoreSearchVC = searchVC
+        return searchVC
     }
 
     private lazy var sideMenuView: SideMenuView = {
@@ -121,12 +131,15 @@ extension ContainerViewController: MenuButtonDelegate {
     }
 
     func toggleMenu() {
-        if shouldPopNavigationStack() {
-            navController?.popToRootViewController(animated: true)
-            return
+        switch menuState {
+        case .closed:
+            if shouldPopNavigationStack() {
+                navController?.popToRootViewController(animated: false)
+            }
+            openMenu()
+        case .opened:
+            closeMenu()
         }
-
-        menuState == .closed ? openMenu() : closeMenu()
     }
 
     private func shouldPopNavigationStack() -> Bool {
@@ -194,7 +207,7 @@ extension ContainerViewController: SideMenuViewDelegate {
         case .scriptEditor:
             show(viewController: scriptListViewController)
         case .appStore:
-            show(viewController: appStoreViewController)
+            show(viewController: resolveAppStoreViewController())
         case .jailbreakBypass:
             show(viewController: jailbreakBypassViewController)
         case .sandboxExfiltration:
@@ -203,6 +216,9 @@ extension ContainerViewController: SideMenuViewDelegate {
     }
 
     private func show(viewController: UIViewController) {
+        if menuState == .opened {
+            closeMenu()
+        }
         navController?.setViewControllers([viewController], animated: false)
     }
 }

@@ -58,14 +58,38 @@ final class SimpleDropdown: UIView, UITableViewDataSource, UITableViewDelegate {
         return CGFloat(rows) * rowHeight
     }
 
-    func show(from anchorView: UIView, in containerView: UIView, maxRows: Int = 5, rowHeight: CGFloat = 44, margin: CGFloat = 8) {
-        let height = desiredHeight(maxRows: maxRows, rowHeight: rowHeight)
+    /// Shows the dropdown below `anchorView`, clamped to whatever vertical space is actually
+    /// available in `containerView` — flipping above the anchor and/or shrinking (the table view
+    /// scrolls internally) instead of extending the frame past the screen edge, which used to just
+    /// push the bottom rows off-screen with no way to reach them.
+    ///
+    /// `widthAnchor`, if provided, drives the dropdown's horizontal size/position instead of
+    /// `anchorView` — pass the layout container that already spans a comfortable content width
+    /// (e.g. the screen's normal side margins) when `anchorView` itself is a narrow control (like
+    /// one button in a row of equal-width buttons), so the list isn't squeezed into that control's
+    /// own width. `anchorView` still drives the vertical (Y) position either way.
+    func show(from anchorView: UIView, widthAnchor: UIView? = nil, in containerView: UIView,
+              maxRows: Int = 5, rowHeight: CGFloat = 44, margin: CGFloat = 8) {
+        let desired = desiredHeight(maxRows: maxRows, rowHeight: rowHeight)
         let anchorFrame = anchorView.convert(anchorView.bounds, to: containerView)
+        let widthView = widthAnchor ?? anchorView
+        let widthFrame = widthView.convert(widthView.bounds, to: containerView)
+        let bounds = containerView.bounds
+        let safeArea = containerView.safeAreaInsets
+
+        let availableBelow = bounds.maxY - safeArea.bottom - anchorFrame.maxY - margin
+        let availableAbove = anchorFrame.minY - bounds.minY - safeArea.top - margin
+
+        let showBelow = availableBelow >= rowHeight || availableBelow >= availableAbove
+        let available = max(rowHeight, showBelow ? availableBelow : availableAbove)
+        let height = min(desired, available)
+
+        let y = showBelow ? anchorFrame.maxY + margin : anchorFrame.minY - margin - height
 
         frame = CGRect(
-            x: anchorFrame.minX,
-            y: anchorFrame.maxY + margin,
-            width: anchorFrame.width,
+            x: widthFrame.minX,
+            y: y,
+            width: widthFrame.width,
             height: height
         )
 
@@ -73,6 +97,7 @@ final class SimpleDropdown: UIView, UITableViewDataSource, UITableViewDelegate {
             containerView.addSubview(self)
         }
 
+        tableView.isScrollEnabled = desired > height
         tableView.reloadData()
     }
 

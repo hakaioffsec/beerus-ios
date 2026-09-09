@@ -39,6 +39,7 @@ final class Requests {
         from urlTarget: String,
         fileName: String? = nil,
         destinationPath: String,
+        progress: ((Int64, Int64) -> Void)? = nil,
         completion: @escaping (Result<URL, Error>) -> Void
     ) {
         guard let url = URL(string: urlTarget) else {
@@ -50,7 +51,13 @@ final class Requests {
         NSLog("[Requests] Starting download from: \(urlTarget)")
         NSLog("[Requests] Destination path: \(destinationPath)")
 
+        // Kept alive by being captured in the completion closure below (which URLSession retains
+        // until the task finishes), then invalidated there.
+        var progressObservation: NSKeyValueObservation?
+
         let task = URLSession.shared.downloadTask(with: url) { tempURL, response, error in
+            progressObservation?.invalidate()
+            progressObservation = nil
 
             if let error = error {
                 NSLog("[Requests] Download error: \(error.localizedDescription)")
@@ -106,6 +113,12 @@ final class Requests {
             } catch {
                 NSLog("[Requests] File operation error: \(error.localizedDescription)")
                 completion(.failure(error))
+            }
+        }
+
+        if let progress {
+            progressObservation = task.progress.observe(\.fractionCompleted, options: [.new]) { taskProgress, _ in
+                progress(taskProgress.completedUnitCount, taskProgress.totalUnitCount)
             }
         }
 

@@ -72,6 +72,11 @@ final class Database {
     // MARK: - Create Table
 
     private func createProfilesTable() {
+        guard db != nil else {
+            print("[-] Database not open, skipping table creation")
+            return
+        }
+
         let query = """
         CREATE TABLE IF NOT EXISTS Profiles (
             Name TEXT NOT NULL UNIQUE,
@@ -93,6 +98,11 @@ final class Database {
     // MARK: - Migration
 
     private func addStatusColumnIfNeeded() {
+        guard db != nil else {
+            print("[-] Database not open, skipping migration")
+            return
+        }
+
         let query = "ALTER TABLE Profiles ADD COLUMN Status TEXT NOT NULL DEFAULT 'off';"
 
         if sqlite3_exec(db, query, nil, nil, nil) == SQLITE_OK {
@@ -112,6 +122,11 @@ final class Database {
 
     @discardableResult
     func addProfile(name: String, proxy: String) -> Bool {
+        guard db != nil else {
+            print("[-] Database not open")
+            return false
+        }
+
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedProxy = proxy.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedStatus = "off"
@@ -164,6 +179,11 @@ final class Database {
 
     @discardableResult
     func deleteProfile(name: String) -> Bool {
+        guard db != nil else {
+            print("[-] Database not open")
+            return false
+        }
+
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
 
         guard !trimmedName.isEmpty else {
@@ -207,6 +227,11 @@ final class Database {
     // MARK: - Fetch Profiles
 
     func fetchProfiles() -> [Profile] {
+        guard db != nil else {
+            print("[-] Database not open")
+            return []
+        }
+
         let query = "SELECT Name, Proxy, Status FROM Profiles ORDER BY Name ASC;"
         var statement: OpaquePointer?
         var profiles: [Profile] = []
@@ -236,6 +261,8 @@ final class Database {
     // MARK: - Check Existing Profile
 
     private func profileExists(name: String) -> Bool {
+        guard db != nil else { return false }
+
         let query = "SELECT 1 FROM Profiles WHERE Name = ? LIMIT 1;"
         var statement: OpaquePointer?
 
@@ -254,6 +281,11 @@ final class Database {
 
     @discardableResult
     func updateStatus(name: String, status: String) -> Bool {
+        guard db != nil else {
+            print("[-] Database not open")
+            return false
+        }
+
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedStatus = status.trimmingCharacters(in: .whitespacesAndNewlines)
 

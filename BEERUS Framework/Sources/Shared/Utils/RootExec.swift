@@ -36,10 +36,6 @@ enum RootExec {
     static func injectApp(_ bundleId: String) -> String? { send("INJECT_APP \(bundleId)") }
     static func injectAll() -> String? { send("INJECT_ALL") }
 
-    // Binary patching commands
-    static func patchApp(_ bundleId: String) -> String? { send("PATCH_APP \(bundleId)") }
-    static func unpatchApp(_ bundleId: String) -> String? { send("UNPATCH_APP \(bundleId)") }
-
     // MARK: - Shell (streaming)
 
     struct ShellResult {
@@ -53,6 +49,7 @@ enum RootExec {
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else { return ShellResult(output: "error: socket failed", exitCode: -1) }
         defer { close(fd) }
+        setRecvSendTimeout(fd: fd, seconds: shellTimeoutSec)
 
         var addr = sockaddr_un()
         addr.sun_family = sa_family_t(AF_UNIX)
@@ -73,10 +70,21 @@ enum RootExec {
         // Read all streamed data
         var data = Data()
         var buf = [UInt8](repeating: 0, count: 8192)
+        var timedOut = false
         while true {
             let n = recv(fd, &buf, buf.count, 0)
-            if n <= 0 { break }
-            data.append(contentsOf: buf[..<n])
+            if n > 0 {
+                data.append(contentsOf: buf[..<n])
+                continue
+            }
+            if n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK) {
+                timedOut = true
+            }
+            break
+        }
+
+        if timedOut {
+            return ShellResult(output: "error: daemon timed out", exitCode: -1)
         }
 
         // Parse exit code from trailer: \n\0EXIT:<code>\0
@@ -112,11 +120,12 @@ enum RootExec {
 
     static func shellAwait(_ cmd: String, completion: @escaping (ShellResult) -> Void) {
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
-        guard fd >= 0 else { 
+        guard fd >= 0 else {
             completion(ShellResult(output: "error: socket failed", exitCode: -1))
             return
         }
         defer { close(fd) }
+        setRecvSendTimeout(fd: fd, seconds: shellTimeoutSec)
 
         var addr = sockaddr_un()
         addr.sun_family = sa_family_t(AF_UNIX)
@@ -140,10 +149,22 @@ enum RootExec {
         // Read all streamed data
         var data = Data()
         var buf = [UInt8](repeating: 0, count: 8192)
+        var timedOut = false
         while true {
             let n = recv(fd, &buf, buf.count, 0)
-            if n <= 0 { break }
-            data.append(contentsOf: buf[..<n])
+            if n > 0 {
+                data.append(contentsOf: buf[..<n])
+                continue
+            }
+            if n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK) {
+                timedOut = true
+            }
+            break
+        }
+
+        if timedOut {
+            completion(ShellResult(output: "error: daemon timed out", exitCode: -1))
+            return
         }
 
         // Parse exit code from trailer: \n\0EXIT:<code>\0
@@ -181,6 +202,7 @@ enum RootExec {
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else { return ShellResult(output: "error: socket failed", exitCode: -1) }
         defer { close(fd) }
+        setRecvSendTimeout(fd: fd, seconds: quickTimeoutSec)
 
         var addr = sockaddr_un()
         addr.sun_family = sa_family_t(AF_UNIX)
@@ -201,10 +223,21 @@ enum RootExec {
         // Read all streamed data
         var data = Data()
         var buf = [UInt8](repeating: 0, count: 8192)
+        var timedOut = false
         while true {
             let n = recv(fd, &buf, buf.count, 0)
-            if n <= 0 { break }
-            data.append(contentsOf: buf[..<n])
+            if n > 0 {
+                data.append(contentsOf: buf[..<n])
+                continue
+            }
+            if n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK) {
+                timedOut = true
+            }
+            break
+        }
+
+        if timedOut {
+            return ShellResult(output: "error: daemon timed out", exitCode: -1)
         }
 
         // Parse exit code from trailer: \n\0EXIT:<code>\0
@@ -238,6 +271,18 @@ enum RootExec {
 
     // MARK: - Private
 
+    /// Quick daemon queries (PING/WHOAMI/status/etc). SET_PROXY also uses this class of timeout.
+    private static let quickTimeoutSec: Int = 10
+    /// Streaming SHELL commands (can legitimately run long, but SO_RCVTIMEO applies per-recv(),
+    /// so this only trips if the daemon goes fully silent between output chunks).
+    private static let shellTimeoutSec: Int = 30
+
+    private static func setRecvSendTimeout(fd: Int32, seconds: Int) {
+        var tv = timeval(tv_sec: seconds, tv_usec: 0)
+        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
+        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
+    }
+
     private static func send(_ msg: String) -> String? {
         print("[RootExec] send(\(msg)) - sockPath: \(sockPath)")
 
@@ -247,6 +292,7 @@ enum RootExec {
             return nil
         }
         defer { close(fd) }
+        setRecvSendTimeout(fd: fd, seconds: quickTimeoutSec)
 
         var addr = sockaddr_un()
         addr.sun_family = sa_family_t(AF_UNIX)

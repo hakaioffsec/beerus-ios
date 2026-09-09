@@ -546,7 +546,9 @@ final class AppStoreService {
         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
         let destination = docs.appendingPathComponent(fileName).path
 
-        let tmpPath = destination + ".tmp"
+        // Unique per invocation so two concurrent downloads of the same bundleID/version don't race
+        // on the same working file.
+        let tmpPath = destination + ".\(UUID().uuidString.prefix(8)).tmp"
         try await downloadFile(from: item.url, to: tmpPath, progress: progress)
 
         try IPAProcessor.applyPatches(
@@ -621,27 +623,64 @@ final class AppStoreService {
         return DownloadItemResult(url: downloadURL, sinfs: sinfs, metadata: metadata)
     }
 
+    /// Reports incremental progress via URLSessionDownloadDelegate — `download(from:)` only calls back
+    /// once, after the whole transfer finishes, which leaves the UI frozen at 0% for the entire download.
+    private final class DownloadProgressDelegate: NSObject, URLSessionDownloadDelegate {
+        private let progress: ((Int64, Int64) -> Void)?
+        var continuation: CheckedContinuation<URL, Error>?
+        private var didResume = false
+
+        init(progress: ((Int64, Int64) -> Void)?) {
+            self.progress = progress
+        }
+
+        func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,
+                         didWriteData bytesWritten: Int64, totalBytesWritten: Int64,
+                         totalBytesExpectedToWrite: Int64) {
+            progress?(totalBytesWritten, totalBytesExpectedToWrite)
+        }
+
+        func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,
+                         didFinishDownloadingTo location: URL) {
+            guard !didResume else { return }
+            didResume = true
+            // `location` is deleted as soon as this method returns, so claim it first.
+            let ownedURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            do {
+                try FileManager.default.moveItem(at: location, to: ownedURL)
+                continuation?.resume(returning: ownedURL)
+            } catch {
+                continuation?.resume(throwing: error)
+            }
+        }
+
+        func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+            guard let error, !didResume else { return }
+            didResume = true
+            continuation?.resume(throwing: error)
+        }
+    }
+
     private func downloadFile(from urlString: String, to path: String,
                                progress: ((Int64, Int64) -> Void)?) async throws {
         guard let url = URL(string: urlString) else {
             throw AppStoreError.downloadFailed("invalid download URL")
         }
 
-        let dlSession = URLSession(configuration: .default)
-        defer { dlSession.finishTasksAndInvalidate() } // ponytail: fix URLSession leak
-        let (tempURL, response) = try await dlSession.download(from: url)
+        let delegate = DownloadProgressDelegate(progress: progress)
+        let dlSession = URLSession(configuration: .default, delegate: delegate, delegateQueue: nil)
+        defer { dlSession.finishTasksAndInvalidate() }
 
-        guard let http = response as? HTTPURLResponse,
-              (200...299).contains(http.statusCode) else {
-            throw AppStoreError.downloadFailed("download request failed")
+        let tempURL: URL = try await withCheckedThrowingContinuation { continuation in
+            delegate.continuation = continuation
+            dlSession.downloadTask(with: url).resume()
         }
 
         let fileURL = URL(fileURLWithPath: path)
         try? FileManager.default.removeItem(at: fileURL)
         try FileManager.default.moveItem(at: tempURL, to: fileURL)
 
-        let totalBytes = http.expectedContentLength
-        let fileSize = (try? FileManager.default.attributesOfItem(atPath: path)[.size] as? Int64) ?? totalBytes
+        let fileSize = (try? FileManager.default.attributesOfItem(atPath: path)[.size] as? Int64) ?? 0
         progress?(fileSize, fileSize)
     }
 

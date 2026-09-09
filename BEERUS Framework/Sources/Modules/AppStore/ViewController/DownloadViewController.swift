@@ -5,6 +5,7 @@ final class DownloadViewController: BaseViewController {
     private let app: AppStoreApp
     private let versionID: String?
     private var downloadedPath: String?
+    private var downloadTask: Task<Void, Never>?
 
     // ponytail: haptic feedback for success/error
     private let successFeedback = UINotificationFeedbackGenerator()
@@ -18,6 +19,12 @@ final class DownloadViewController: BaseViewController {
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    deinit {
+        // Leaving this screen mid-download shouldn't leave an orphaned download racing a
+        // later retry/redownload for the same file.
+        downloadTask?.cancel()
+    }
 
     // MARK: - UI Elements
 
@@ -130,7 +137,7 @@ final class DownloadViewController: BaseViewController {
     // MARK: - Download
 
     private func startDownload() {
-        Task { [weak self] in
+        downloadTask = Task { [weak self] in
             guard let self else { return }
             do {
                 updateStep(0, status: .inProgress)
@@ -142,6 +149,7 @@ final class DownloadViewController: BaseViewController {
                 } catch {
                     throw error
                 }
+                try Task.checkCancellation()
                 updateStep(0, status: .done)
 
                 updateStep(1, status: .inProgress)
@@ -149,7 +157,7 @@ final class DownloadViewController: BaseViewController {
                     app: self.app, externalVersionID: self.versionID
                 ) { [weak self] downloaded, total in
                     Task { @MainActor in
-                        guard let self else { return }
+                        guard let self, !Task.isCancelled else { return }
                         let pct = total > 0 ? Float(downloaded) / Float(total) : 0
                         // ponytail: animated progress update
                         self.progressBar.setProgress(pct, animated: true)
@@ -160,6 +168,7 @@ final class DownloadViewController: BaseViewController {
                         )
                     }
                 }
+                try Task.checkCancellation()
                 updateStep(1, status: .done)
 
                 // ponytail: patching steps with brief delay so user sees progress
@@ -181,6 +190,8 @@ final class DownloadViewController: BaseViewController {
                     self.showActionsAnimated()
                 }
 
+            } catch is CancellationError {
+                // View was dismissed mid-download; nothing left to update.
             } catch AppStoreError.tokenExpired {
                 await MainActor.run {
                     self.handleTokenExpired()
@@ -196,19 +207,32 @@ final class DownloadViewController: BaseViewController {
         }
     }
 
-    // ponytail: map errors to user-friendly messages
+    // ponytail: map errors to user-friendly messages — switches on the thrown error's type instead
+    // of sniffing `localizedDescription` substrings, so internal/technical messages (e.g. IPAProcessor's
+    // "sinf/path count mismatch...") never leak to the user, and unrelated errors that happen to contain
+    // a matched word (e.g. "already") don't get misclassified.
     private func friendlyError(_ error: Error) -> String {
-        let msg = error.localizedDescription.lowercased()
-        if msg.contains("paid") || msg.contains("purchase") {
-            return "Paid apps require purchase on device"
+        if let appError = error as? AppStoreError {
+            switch appError {
+            case .paidAppNotSupported:
+                return "Paid apps require purchase on device"
+            case .licenseRequired:
+                return "This app requires a valid license on your account."
+            case .tokenExpired:
+                return "Your session expired. Please log in again."
+            case .purchaseFailed:
+                return "Could not complete the purchase. Please try again later."
+            case .downloadFailed, .installFailed:
+                return "Could not complete the download. Please try again later."
+            case .keychainSaveFailed, .bagFailed, .loginFailed, .authCodeRequired,
+                 .accountDisabled, .searchFailed, .lookupFailed, .versionsFailed, .metadataFailed:
+                return "Something went wrong. Please try again."
+            }
         }
-        if msg.contains("network") || msg.contains("connection") || msg.contains("timed out") {
+        if error is URLError {
             return "Connection failed. Check your internet and try again."
         }
-        if msg.contains("license") || msg.contains("already") {
-            return "License already acquired"
-        }
-        return error.localizedDescription
+        return "Could not complete the download. Please try again later."
     }
 
     private func showActionsAnimated() {

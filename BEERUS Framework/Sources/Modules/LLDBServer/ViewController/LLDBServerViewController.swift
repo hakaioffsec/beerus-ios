@@ -21,6 +21,7 @@ final class LLDBServerViewController: BaseViewController {
     private var state: ServerState = .notInstalled
     private var foundPath: String?
     private var logTask: Task<Void, Never>?
+    private var installTask: Task<Void, Never>?
 
     private let port = "1234"
     private let pkg  = "debugserver"
@@ -191,7 +192,8 @@ final class LLDBServerViewController: BaseViewController {
         case .notInstalled:  install()
         case .offline:       showProcessPicker()
         case .online:        stopServer()
-        case .installing, .starting: break
+        case .installing:    cancelInstall()
+        case .starting: break
         }
     }
 
@@ -203,22 +205,33 @@ final class LLDBServerViewController: BaseViewController {
 
         applyState(.installing)
 
-        Task.detached { [weak self] in
+        installTask = Task.detached { [weak self] in
             guard let self else { return }
 
             await self.setProgress(0.1, "checking apt...")
+            guard !Task.isCancelled else { return }
             guard RootExec.shell("which apt-get 2>/dev/null").exitCode == 0 else {
                 await self.failInstall("apt-get not found"); return
             }
 
-            await self.setProgress(0.25, "resolving package...")
+            await self.setProgress(0.2, "resolving package...")
+            guard !Task.isCancelled else { return }
             let info = RootExec.shell("apt-cache show \(self.pkg) 2>/dev/null")
             guard info.exitCode == 0, info.output.contains("Package:") else {
                 await self.failInstall("package not found in repos", color: .orange); return
             }
 
+            // Pre-clear any unrelated broken/half-removed packages first — apt refuses to install
+            // anything at all while any package on the system has unmet dependencies, even ones
+            // completely unrelated to debugserver (e.g. a tweak removed but not fully purged).
+            await self.setProgress(0.35, "checking for broken packages...")
+            guard !Task.isCancelled else { return }
+            _ = RootExec.shell("apt-get install -f -y 2>&1")
+
             await self.setProgress(0.5, "installing...")
+            guard !Task.isCancelled else { return }
             let result = RootExec.shell("apt-get install -y \(self.pkg) 2>&1")
+            guard !Task.isCancelled else { return }
 
             if result.exitCode == 0 {
                 await self.setProgress(1.0, "Installed", color: self.green)
@@ -230,6 +243,15 @@ final class LLDBServerViewController: BaseViewController {
                 await self.failInstall(msg)
             }
         }
+    }
+
+    @MainActor
+    private func cancelInstall() {
+        installTask?.cancel()
+        installTask = nil
+        applyState(.notInstalled)
+        feedbackLabel.text = "cancelled"
+        feedbackLabel.textColor = muted
     }
 
     // MARK: - Process Picker
@@ -329,6 +351,23 @@ final class LLDBServerViewController: BaseViewController {
 
     // MARK: - Log Streaming
 
+    /// Caps how much log text is kept on screen, so a long-running debug session can't grow the
+    /// console's memory footprint without bound.
+    private static let maxConsoleLogLength = 300_000
+
+    @MainActor
+    private func appendToConsole(_ newContent: String) {
+        guard !newContent.isEmpty else { return }
+        consoleView.text += newContent
+        if consoleView.text.count > Self.maxConsoleLogLength {
+            let overflow = consoleView.text.count - Self.maxConsoleLogLength
+            consoleView.text.removeFirst(overflow)
+        }
+        guard !consoleView.text.isEmpty else { return }
+        let bottom = NSRange(location: consoleView.text.count - 1, length: 1)
+        consoleView.scrollRangeToVisible(bottom)
+    }
+
     private func startLogStreaming() {
         logTask?.cancel()
         consoleView.text = ""
@@ -336,7 +375,7 @@ final class LLDBServerViewController: BaseViewController {
 
         logTask = Task.detached { [weak self] in
             guard let self else { return }
-            var lastSize = 0
+            var lastByteOffset = 0
 
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 800_000_000)
@@ -348,30 +387,20 @@ final class LLDBServerViewController: BaseViewController {
                 )
                 let isAlive = !alive.output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
 
-                // Read new log content using tail with byte offset
-                let result = RootExec.shell("cat \(self.logFile) 2>/dev/null")
-                let full = result.output
-
-                if full.count > lastSize {
-                    let newContent = String(full.dropFirst(lastSize))
-                    lastSize = full.count
-
-                    await MainActor.run {
-                        self.consoleView.text += newContent
-                        // Auto-scroll to bottom
-                        let bottom = NSRange(location: self.consoleView.text.count - 1, length: 1)
-                        self.consoleView.scrollRangeToVisible(bottom)
-                    }
+                // Only pull the bytes written since the last poll (byte offset via `tail -c`),
+                // instead of re-transferring the whole growing log file on every poll.
+                let chunk = RootExec.shell("tail -c +\(lastByteOffset + 1) \(self.logFile) 2>/dev/null")
+                if !chunk.output.isEmpty {
+                    lastByteOffset += chunk.output.utf8.count
+                    await self.appendToConsole(chunk.output)
                 }
 
-                // If server died, update state
+                // If server died, pull one last chunk and update state
                 if !isAlive {
-                    let finalLog = RootExec.shell("cat \(self.logFile) 2>/dev/null")
+                    let finalChunk = RootExec.shell("tail -c +\(lastByteOffset + 1) \(self.logFile) 2>/dev/null")
                     await MainActor.run {
-                        if finalLog.output.count > lastSize {
-                            self.consoleView.text += String(finalLog.output.dropFirst(lastSize))
-                        }
-                        self.consoleView.text += "\n[debugserver exited]"
+                        self.appendToConsole(finalChunk.output)
+                        self.appendToConsole("\n[debugserver exited]")
                         self.feedbackLabel.text = "server stopped"
                         self.feedbackLabel.textColor = self.muted
                         if let p = self.foundPath {
@@ -440,6 +469,16 @@ final class LLDBServerViewController: BaseViewController {
         applyState(.notInstalled)
         feedbackLabel.text = msg
         feedbackLabel.textColor = color
+
+        let alert = UIAlertController(title: "Install Failed", message: msg, preferredStyle: .alert)
+        if msg.localizedCaseInsensitiveContains("unmet dependencies")
+            || msg.localizedCaseInsensitiveContains("fix-broken") {
+            alert.addAction(UIAlertAction(title: "Fix & Retry", style: .default) { [weak self] _ in
+                self?.install()
+            })
+        }
+        alert.addAction(UIAlertAction(title: "OK", style: .cancel))
+        present(alert, animated: true)
     }
 
     // MARK: - Apply State
@@ -476,7 +515,8 @@ final class LLDBServerViewController: BaseViewController {
             progressBar.isHidden = false
             progressBar.progress = 0
             progressBar.progressTintColor = UIColor(named: "ButtonColor") ?? .systemRed
-            actionButton.isHidden = true
+            actionButton.setTitle("CANCEL", for: .normal)
+            actionButton.backgroundColor = UIColor(named: "RED")
 
         case .starting:
             statusIcon.image = UIImage(systemName: "bolt.circle", withConfiguration: iconCfg)

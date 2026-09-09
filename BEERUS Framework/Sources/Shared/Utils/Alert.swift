@@ -2,18 +2,28 @@ import UIKit
 
 final class Alert {
 
+    /// Walks to the top of the `presentedViewController` chain so a second alert stacks on top of
+    /// (or waits for) the first one instead of `present` silently doing nothing, which is what
+    /// happens when you call `present` on a view controller that's already presenting something.
+    private static func topPresentableViewController() -> UIViewController? {
+        guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+              var top = windowScene.windows.first?.rootViewController else {
+            return nil
+        }
+        while let presented = top.presentedViewController {
+            top = presented
+        }
+        return top
+    }
+
     static func show(title: String = "", message: String = "") {
         let alert = UIAlertController(title: title, message: message, preferredStyle: .alert)
         let action = UIAlertAction(title: "OK", style: .default, handler: nil)
-        
+
         alert.addAction(action)
-        
+
         DispatchQueue.main.async {
-            if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene {
-                if let rootViewController = windowScene.windows.first?.rootViewController {
-                    rootViewController.present(alert, animated: true, completion: nil)
-                }
-            }
+            topPresentableViewController()?.present(alert, animated: true, completion: nil)
         }
     }
     
@@ -46,10 +56,13 @@ final class Alert {
         alert.addAction(actionConfirm)
 
         DispatchQueue.main.async {
-            if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-               let rootViewController = windowScene.windows.first?.rootViewController {
-                rootViewController.present(alert, animated: true)
+            guard let top = topPresentableViewController() else {
+                // No presentable window yet — don't leave the caller waiting forever for a
+                // completion that will never come.
+                completion(nil)
+                return
             }
+            top.present(alert, animated: true)
         }
     }
 
@@ -91,10 +104,11 @@ final class Alert {
         alert.addAction(actionConfirm)
 
         DispatchQueue.main.async {
-            if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-            let rootViewController = windowScene.windows.first?.rootViewController {
-                rootViewController.present(alert, animated: true)
+            guard let top = topPresentableViewController() else {
+                completion(nil)
+                return
             }
+            top.present(alert, animated: true)
         }
     }
 }
@@ -106,6 +120,11 @@ extension UIViewController {
     func showAlert(title: String, message: String) {
         let alert = UIAlertController(title: title, message: message, preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "OK", style: .default))
-        present(alert, animated: true)
+
+        var top: UIViewController = self
+        while let presented = top.presentedViewController {
+            top = presented
+        }
+        top.present(alert, animated: true)
     }
 }

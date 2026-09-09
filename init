@@ -65,22 +65,6 @@ setup() {
     fi
 }
 
-compileiOSCode (){
-    local codeFile="$1"
-    local entitlements="$2"
-    SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
-
-    clang -arch arm64 \
-    -isysroot "$SDK" \
-    -fobjc-arc \
-    -framework Foundation \
-    -framework CoreFoundation \
-    -O2 \
-    "$codeFile.m" -o "$codeFile"
-
-    ldid -S"$entitlements" "$codeFile"
-}
-
 compileDaemon() {
     SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
 
@@ -89,24 +73,11 @@ compileDaemon() {
     -miphoneos-version-min=14.0 \
     -O2 -Wall \
     -framework CoreFoundation \
-    Daemon/BeerusDaemon.c Daemon/BeerusInjector.c Daemon/MachOPatcher.c \
+    Daemon/BeerusDaemon.c Daemon/BeerusInjector.c \
     -lproc -lz \
     -o Daemon/beerusd
 
-    ldid -SDaemon/ent.plist Daemon/beerusd
-}
-
-compileSpawnHook() {
-    SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
-
-    clang -arch arm64 \
-    -isysroot "$SDK" \
-    -miphoneos-version-min=15.0 \
-    -O2 -Wall -Wextra \
-    -shared -dynamiclib \
-    SpawnHook/BeerusSpawnHook.c -o SpawnHook/BeerusSpawnHook.dylib
-
-    ldid -S SpawnHook/BeerusSpawnHook.dylib
+    ldid -SDaemon/daemon-ent.plist Daemon/beerusd
 }
 
 newEntFile() {
@@ -163,6 +134,16 @@ EOF
 }
 
 build() {
+    if [ "$isRootLess" = false ]; then
+        echo "AVISO: build ROOTFUL (/Applications, /Library, /usr/local/bin)."
+        echo "A maioria dos jailbreaks modernos (palera1n, Dopamine) e ROOTLESS -- use --rootless."
+        read -r -p "Continuar mesmo assim com ROOTFUL? [y/N] " confirm
+        case "$confirm" in
+            [yY][eE][sS]|[yY]) ;;
+            *) echo "Abortado. Rode de novo com --rootless."; exit 1 ;;
+        esac
+    fi
+
     if [ -f "$ProjectName.deb" ]; then
         rm "$ProjectName.deb"
     fi
@@ -195,11 +176,17 @@ build() {
     mv ".tmp/$ProjectName.app" ".deb$rootPath/Applications/"
     rm -rf .tmp/
 
+    PKG_VERSION=$(xcodebuild -showBuildSettings -project "$ProjectName.xcodeproj" -scheme "$ProjectName" -configuration Release 2>/dev/null | awk -F' = ' '/ MARKETING_VERSION /{print $2; exit}')
+    BUILD_NUM=$(xcodebuild -showBuildSettings -project "$ProjectName.xcodeproj" -scheme "$ProjectName" -configuration Release 2>/dev/null | awk -F' = ' '/ CURRENT_PROJECT_VERSION /{print $2; exit}')
+    [ -z "$PKG_VERSION" ] && PKG_VERSION="1.0.0"
+    [ -n "$BUILD_NUM" ] && PKG_VERSION="${PKG_VERSION}-${BUILD_NUM}"
+
     cat <<EOF > .deb/DEBIAN/control
-Package: io.hakaisecurity.BEERUS-Framework
+Package: io.hakaisecurity.beerus-framework
 Name: Beerus Framework
-Version: 1.0.0
+Version: $PKG_VERSION
 Architecture: all
+Depends: uikittools
 Description: iOS security testing framework
 Maintainer: Hakai Security
 Author: Hakai Security
@@ -209,16 +196,14 @@ EOF
     cat <<EOF > .deb/DEBIAN/postinst
 #!/bin/sh
 
-set -e
+chown root:wheel "$rootPath/Applications/$ProjectName.app/$ProjectName" || true
+chmod 6755 "$rootPath/Applications/$ProjectName.app/$ProjectName" || true
+uicache -p "$rootPath/Applications/$ProjectName.app" || true
 
-chown root:wheel "$rootPath/Applications/$ProjectName.app/$ProjectName"
-chmod 6755 "$rootPath/Applications/$ProjectName.app/$ProjectName"
-uicache -p "$rootPath/Applications/$ProjectName.app"
-
-chown root:wheel "$rootPath/usr/local/bin/beerusd"
-chmod 755 "$rootPath/usr/local/bin/beerusd"
-chown root:wheel "$rootPath/Library/LaunchDaemons/com.beerus.daemon.plist"
-chmod 644 "$rootPath/Library/LaunchDaemons/com.beerus.daemon.plist"
+chown root:wheel "$rootPath/usr/local/bin/beerusd" || true
+chmod 755 "$rootPath/usr/local/bin/beerusd" || true
+chown root:wheel "$rootPath/Library/LaunchDaemons/com.beerus.daemon.plist" || true
+chmod 644 "$rootPath/Library/LaunchDaemons/com.beerus.daemon.plist" || true
 
 # Stop old daemon if upgrading
 launchctl bootout system "$rootPath/Library/LaunchDaemons/com.beerus.daemon.plist" 2>/dev/null || true
@@ -227,7 +212,7 @@ launchctl bootout system "$rootPath/Library/LaunchDaemons/io.hakaisecurity.BEERU
 rm -f "$rootPath/Library/LaunchDaemons/io.hakaisecurity.BEERUS-Framework.plist" 2>/dev/null || true
 rm -f "$rootPath/usr/local/bin/BEERUS-Framework" 2>/dev/null || true
 
-launchctl bootstrap system "$rootPath/Library/LaunchDaemons/com.beerus.daemon.plist"
+launchctl bootstrap system "$rootPath/Library/LaunchDaemons/com.beerus.daemon.plist" || true
 
 exit 0
 EOF
@@ -305,10 +290,6 @@ EOF
     
     compileDaemon
     mv Daemon/beerusd ".deb$rootPath/usr/local/bin/beerusd"
-
-    compileSpawnHook
-    mkdir -p ".deb$rootPath/usr/lib"
-    mv SpawnHook/BeerusSpawnHook.dylib ".deb$rootPath/usr/lib/"
 
     dpkg-deb -b .deb "$ProjectName.deb"
     rm -rf .deb

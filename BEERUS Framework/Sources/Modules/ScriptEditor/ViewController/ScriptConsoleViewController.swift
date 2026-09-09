@@ -238,6 +238,11 @@ final class ScriptConsoleViewController: UIViewController {
         return df
     }()
 
+    /// Caps how much text the console keeps, so a chatty script (many console.log()s/sec, common
+    /// in tracing) can't grow this view's memory footprint without bound.
+    private static let maxOutputLength = 300_000
+    private var flushScheduled = false
+
     private func appendOutput(_ text: String, color: UIColor) {
         let ts = "[\(Self.tsFormatter.string(from: Date()))] "
         let line = NSAttributedString(string: "\(ts)\(text)\n", attributes: [
@@ -245,8 +250,28 @@ final class ScriptConsoleViewController: UIViewController {
             .foregroundColor: color,
         ])
         outputText.append(line)
-        outputView.attributedText = outputText
-        outputView.scrollRangeToVisible(NSRange(location: outputText.length - 1, length: 1))
+
+        if outputText.length > Self.maxOutputLength {
+            let overflow = outputText.length - Self.maxOutputLength
+            outputText.deleteCharacters(in: NSRange(location: 0, length: overflow))
+        }
+
+        scheduleOutputFlush()
+    }
+
+    /// Coalesces bursts of appends (e.g. a hot hooked function logging on every call) into at most
+    /// one full text-view re-render per 100ms, instead of reassigning attributedText + scrolling on
+    /// every single message.
+    private func scheduleOutputFlush() {
+        guard !flushScheduled else { return }
+        flushScheduled = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+            guard let self else { return }
+            self.flushScheduled = false
+            self.outputView.attributedText = self.outputText
+            guard self.outputText.length > 0 else { return }
+            self.outputView.scrollRangeToVisible(NSRange(location: self.outputText.length - 1, length: 1))
+        }
     }
 
     // MARK: - Execution
