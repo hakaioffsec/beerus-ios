@@ -283,6 +283,13 @@ extension ZipArchive {
 
             let fullPath = (destDir as NSString).appendingPathComponent(name)
 
+            // Reject zip-slip entries (e.g. "../../etc/x") that would resolve outside destDir.
+            let standardizedFull = (fullPath as NSString).standardizingPath
+            let standardizedDest = (destDir as NSString).standardizingPath
+            guard standardizedFull == standardizedDest || standardizedFull.hasPrefix(standardizedDest + "/") else {
+                throw ZipError.extractFailed("unsafe path in zip entry: \(name)")
+            }
+
             if name.hasSuffix("/") {
                 try fm.createDirectory(atPath: fullPath, withIntermediateDirectories: true)
                 continue

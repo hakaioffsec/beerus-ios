@@ -23,21 +23,28 @@ class BaseViewController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         view.addSubview(menuButton)
-        
+
         NSLayoutConstraint.activate([
             menuButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 16),
             menuButton.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 24),
         ])
     }
-    
+
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        // Covers the menu being opened/closed via edge swipe, not just via this button's own tap.
+        menuButton.setImage(getMenuButtonImage(), for: .normal)
+    }
+
     private func getMenuButtonImage() -> UIImage? {
         return menuDelegate?.isMenuOpened == true
         ? UIImage(systemName: "xmark")
         : UIImage(systemName: "line.3.horizontal.decrease")
     }
-    
+
     @objc private func didTapMenuButton() {
         menuDelegate?.didTapMenuButton()
+        menuButton.setImage(getMenuButtonImage(), for: .normal)
     }
     
     func setupAdditionalConfiguration() {

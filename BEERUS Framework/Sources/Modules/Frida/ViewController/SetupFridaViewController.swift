@@ -86,6 +86,7 @@ final class SetupFridaViewController: BaseViewController {
 
         dd.show(
             from: versionDropdown,
+            widthAnchor: stackView,
             in: window,
             maxRows: 6,
             rowHeight: 44
@@ -113,8 +114,20 @@ final class SetupFridaViewController: BaseViewController {
         return result.output.contains("1")
     }
 
+    private func showDownloadProgress(_ text: String, fraction: Float) {
+        downloadProgressLabel.isHidden = false
+        downloadProgressBar.isHidden = false
+        downloadProgressLabel.text = text
+        downloadProgressBar.setProgress(fraction, animated: true)
+    }
+
+    private func hideDownloadProgress() {
+        downloadProgressLabel.isHidden = true
+        downloadProgressBar.isHidden = true
+        downloadProgressBar.setProgress(0, animated: false)
+    }
+
     @objc private func ToggleFrida(_ sender: UIButton) {
-        NSLog("[BEERUS] \(BeerusStrings.launchctlBin) unload \(BeerusStrings.fridaDaemonPath)");
         buttonStart.isEnabled = false
 
         if isRunning {
@@ -146,100 +159,135 @@ final class SetupFridaViewController: BaseViewController {
             // Download and install new version
             startDownloading = true
             checkFridaRunning()
+            DispatchQueue.main.async { self.showDownloadProgress("Detecting device architecture...", fraction: 0.02) }
 
-            // Obtém arquitetura via dpkg
-            let archResult = RootExec.shell("\(BeerusStrings.dpkgBin) --print-architecture")
-            let arch = archResult.output.trimmingCharacters(in: .whitespacesAndNewlines)
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                guard let self else { return }
 
-            guard !arch.isEmpty else {
-                DispatchQueue.main.async {
-                    self.startDownloading = false
-                    self.buttonStart.isEnabled = true
-                    self.checkFridaRunning()
-                    Alert.show(title: "Error", message: "Could not detect device architecture")
-                }
-                return
-            }
+                // Obtém arquitetura via dpkg
+                let archResult = RootExec.shell("\(BeerusStrings.dpkgBin) --print-architecture")
+                let arch = archResult.output.trimmingCharacters(in: .whitespacesAndNewlines)
 
-            let debFileName = "frida-server.deb"
-            let downloadURL = "https://github.com/frida/frida/releases/download/\(selectedVersion)/frida_\(selectedVersion)_\(arch).deb"
-            let appTmpDir = NSTemporaryDirectory()
-            let systemDebPath = BeerusStrings.tmp + debFileName
-
-            NSLog("[Frida] Architecture: \(arch)")
-            NSLog("[Frida] Downloading from: \(downloadURL)")
-            NSLog("[Frida] App tmp: \(appTmpDir)")
-            NSLog("[Frida] System tmp: \(BeerusStrings.tmp)")
-
-            // Baixa para o tmp do app (sandbox permite)
-            Requests.downloadFile(
-                from: downloadURL,
-                fileName: debFileName,
-                destinationPath: appTmpDir
-            ) { result in
-                switch result {
-                case .success(let fileURL):
-                    NSLog("[Frida] Download success: \(fileURL.path)")
-
-                    // Verifica tamanho do arquivo
-                    let fileSize = (try? FileManager.default.attributesOfItem(atPath: fileURL.path)[.size] as? Int64) ?? 0
-                    NSLog("[Frida] File size: \(fileSize) bytes")
-
-                    if fileSize < 1000 {
-                        DispatchQueue.main.async {
-                            self.startDownloading = false
-                            self.buttonStart.isEnabled = true
-                            self.checkFridaRunning()
-                            Alert.show(title: "Download Failed", message: "File is too small or empty")
-                        }
-                        return
-                    }
-
-                    // Copia para o tmp do sistema via daemon
-                    let copyResult = RootExec.shell("cp '\(fileURL.path)' '\(systemDebPath)'")
-                    NSLog("[Frida] Copy result: \(copyResult.output), exit: \(copyResult.exitCode)")
-
-                    if copyResult.exitCode != 0 {
-                        DispatchQueue.main.async {
-                            self.startDownloading = false
-                            self.buttonStart.isEnabled = true
-                            self.checkFridaRunning()
-                            Alert.show(title: "Install Failed", message: "Failed to copy to system tmp")
-                        }
-                        return
-                    }
-
-                    // Instala usando o daemon
-                    if let response = RootExec.installFrida(from: systemDebPath) {
-                        NSLog("[Frida] Install response: \(response)")
-
-                        // Limpa arquivo temporário
-                        // _ = RootExec.shell("rm -f '\(systemDebPath)'")
-
-                        DispatchQueue.main.async {
-                            self.startDownloading = false
-                            self.buttonStart.isEnabled = true
-                            self.checkFridaRunning()
-
-                            if !response.hasPrefix("ok:") {
-                                Alert.show(title: "Install Failed", message: response)
-                            }
-                        }
-                    } else {
-                        DispatchQueue.main.async {
-                            self.startDownloading = false
-                            self.buttonStart.isEnabled = true
-                            self.checkFridaRunning()
-                            Alert.show(title: "Install Failed", message: "Daemon not responding")
-                        }
-                    }
-                case .failure(let error):
-                    NSLog("[Frida] Download failed: \(error.localizedDescription)")
+                guard !arch.isEmpty else {
                     DispatchQueue.main.async {
                         self.startDownloading = false
                         self.buttonStart.isEnabled = true
                         self.checkFridaRunning()
-                        Alert.show(title: "Download Failed", message: error.localizedDescription)
+                        self.hideDownloadProgress()
+                        Alert.show(title: "Error", message: "Could not detect device architecture")
+                    }
+                    return
+                }
+
+                let debFileName = "frida-server.deb"
+                let downloadURL = "https://github.com/frida/frida/releases/download/\(self.selectedVersion)/frida_\(self.selectedVersion)_\(arch).deb"
+                let appTmpDir = NSTemporaryDirectory()
+                let systemDebPath = BeerusStrings.tmp + debFileName
+
+                NSLog("[Frida] Architecture: \(arch)")
+                NSLog("[Frida] Downloading from: \(downloadURL)")
+                NSLog("[Frida] App tmp: \(appTmpDir)")
+                NSLog("[Frida] System tmp: \(BeerusStrings.tmp)")
+
+                // Baixa para o tmp do app (sandbox permite)
+                Requests.downloadFile(
+                    from: downloadURL,
+                    fileName: debFileName,
+                    destinationPath: appTmpDir,
+                    progress: { downloaded, total in
+                        DispatchQueue.main.async {
+                            let pct = total > 0 ? Double(downloaded) / Double(total) : 0
+                            let dlMB = Double(downloaded) / 1_048_576
+                            let totalMB = Double(total) / 1_048_576
+                            let text = total > 0
+                                ? String(format: "%.1f / %.1f MB · %.0f%%", dlMB, totalMB, pct * 100)
+                                : "Downloading..."
+                            // Download itself is 0-80% of the bar; copy + install fill the rest.
+                            self.showDownloadProgress(text, fraction: 0.05 + Float(pct) * 0.75)
+                        }
+                    }
+                ) { result in
+                    switch result {
+                    case .success(let fileURL):
+                        NSLog("[Frida] Download success: \(fileURL.path)")
+
+                        // Verifica tamanho do arquivo
+                        let fileSize = (try? FileManager.default.attributesOfItem(atPath: fileURL.path)[.size] as? Int64) ?? 0
+                        NSLog("[Frida] File size: \(fileSize) bytes")
+
+                        if fileSize < 1000 {
+                            DispatchQueue.main.async {
+                                self.startDownloading = false
+                                self.buttonStart.isEnabled = true
+                                self.checkFridaRunning()
+                                self.hideDownloadProgress()
+                                Alert.show(title: "Download Failed", message: "File is too small or empty")
+                            }
+                            return
+                        }
+
+                        DispatchQueue.main.async {
+                            self.showDownloadProgress("Copying to system...", fraction: 0.85)
+                        }
+
+                        // Copia para o tmp do sistema via daemon
+                        let copyResult = RootExec.shell("cp '\(fileURL.path)' '\(systemDebPath)'")
+                        NSLog("[Frida] Copy result: \(copyResult.output), exit: \(copyResult.exitCode)")
+
+                        if copyResult.exitCode != 0 {
+                            DispatchQueue.main.async {
+                                self.startDownloading = false
+                                self.buttonStart.isEnabled = true
+                                self.checkFridaRunning()
+                                self.hideDownloadProgress()
+                                Alert.show(title: "Install Failed", message: "Failed to copy to system tmp")
+                            }
+                            return
+                        }
+
+                        DispatchQueue.main.async {
+                            self.showDownloadProgress("Installing frida-server...", fraction: 0.95)
+                        }
+
+                        // Instala usando o daemon
+                        if let response = RootExec.installFrida(from: systemDebPath) {
+                            NSLog("[Frida] Install response: \(response)")
+
+                            // Limpa arquivo temporário
+                            // _ = RootExec.shell("rm -f '\(systemDebPath)'")
+
+                            DispatchQueue.main.async {
+                                self.startDownloading = false
+                                self.buttonStart.isEnabled = true
+                                if response.hasPrefix("ok:") {
+                                    self.showDownloadProgress("Installed!", fraction: 1.0)
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                                        self.hideDownloadProgress()
+                                    }
+                                } else {
+                                    self.hideDownloadProgress()
+                                    Alert.show(title: "Install Failed", message: response)
+                                }
+                                self.checkFridaRunning()
+                            }
+                        } else {
+                            DispatchQueue.main.async {
+                                self.startDownloading = false
+                                self.buttonStart.isEnabled = true
+                                self.checkFridaRunning()
+                                self.hideDownloadProgress()
+                                Alert.show(title: "Install Failed", message: "Daemon not responding")
+                            }
+                        }
+                    case .failure(let error):
+                        NSLog("[Frida] Download failed: \(error.localizedDescription)")
+                        DispatchQueue.main.async {
+                            self.startDownloading = false
+                            self.buttonStart.isEnabled = true
+                            self.checkFridaRunning()
+                            self.hideDownloadProgress()
+                            Alert.show(title: "Download Failed", message: error.localizedDescription)
+                        }
                     }
                 }
             }
@@ -364,6 +412,31 @@ final class SetupFridaViewController: BaseViewController {
         return label
     }()
 
+    private lazy var downloadProgressLabel: UILabel = {
+        let label = UILabel()
+        label.font = AppFont.regular(13)
+        label.textAlignment = .center
+        label.numberOfLines = 1
+        label.adjustsFontSizeToFitWidth = true
+        label.minimumScaleFactor = 0.7
+        label.tintColor = .white
+        label.textColor = .white
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.isHidden = true
+        return label
+    }()
+
+    private lazy var downloadProgressBar: UIProgressView = {
+        let bar = UIProgressView(progressViewStyle: .default)
+        bar.progressTintColor = .RED
+        bar.trackTintColor = UIColor.white.withAlphaComponent(0.15)
+        bar.layer.cornerRadius = 3
+        bar.clipsToBounds = true
+        bar.translatesAutoresizingMaskIntoConstraints = false
+        bar.isHidden = true
+        return bar
+    }()
+
     override func viewDidLoad() {
         super.viewDidLoad()
         applyViewCode()
@@ -376,52 +449,55 @@ final class SetupFridaViewController: BaseViewController {
 extension SetupFridaViewController {
 
     @objc private func checkFridaRunning() {
-        var statusText = "Status: Stopped"
-        var versionText = "Version: None"
-        var toggleFridaText = "Start Frida"
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self else { return }
 
+            var statusText = "Status: Stopped"
+            var versionText = "Version: None"
+            var toggleFridaText = "Start Frida"
 
-        if startDownloading {
-            statusText = "Status: Downloading"
-        } else {
-            let psResult = RootExec.shell("ps aux | grep frida-server | grep -v grep")
-            if psResult.exitCode == 0 && !psResult.output.isEmpty {
-                statusText = "Status: Running"
-                toggleFridaText = "Stop Frida"
-                isRunning = true
+            if self.startDownloading {
+                statusText = "Status: Downloading"
             } else {
-                isRunning = false
+                let psResult = RootExec.shell("ps aux | grep frida-server | grep -v grep")
+                if psResult.exitCode == 0 && !psResult.output.isEmpty {
+                    statusText = "Status: Running"
+                    toggleFridaText = "Stop Frida"
+                    self.isRunning = true
+                } else {
+                    self.isRunning = false
+                }
             }
-        }
 
-        let versionResult = RootExec.shell("\(BeerusStrings.fridaServerPath) --version")
-        let cleanOutput = versionResult.output.trimmingCharacters(in: .whitespacesAndNewlines)
+            let versionResult = RootExec.shell("\(BeerusStrings.fridaServerPath) --version")
+            let cleanOutput = versionResult.output.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        // Verifica se é uma versão válida (formato: X.X.X) e não uma mensagem de erro
-        let isValidVersion = versionResult.exitCode == 0
-            && !cleanOutput.isEmpty
-            && !cleanOutput.contains("sh:")
-            && !cleanOutput.contains("not found")
-            && cleanOutput.range(of: #"^\d+\.\d+\.\d+"#, options: .regularExpression) != nil
+            // Verifica se é uma versão válida (formato: X.X.X) e não uma mensagem de erro
+            let isValidVersion = versionResult.exitCode == 0
+                && !cleanOutput.isEmpty
+                && !cleanOutput.contains("sh:")
+                && !cleanOutput.contains("not found")
+                && cleanOutput.range(of: #"^\d+\.\d+\.\d+"#, options: .regularExpression) != nil
 
-        if isValidVersion {
-            versionText = "Version: " + cleanOutput
-            versionRunning = cleanOutput
-            if selectedVersion.isEmpty {
-                selectedVersion = cleanOutput
+            if isValidVersion {
+                versionText = "Version: " + cleanOutput
+                self.versionRunning = cleanOutput
+                if self.selectedVersion.isEmpty {
+                    self.selectedVersion = cleanOutput
+                }
             }
-        }
 
-        if versions.isEmpty {
-            Github.getReleaseVersions(repository: "frida/frida") { resultVersions in
-                self.versions = resultVersions
+            if self.versions.isEmpty {
+                Github.getReleaseVersions(repository: "frida/frida") { resultVersions in
+                    self.versions = resultVersions
+                }
             }
-        }
 
-        DispatchQueue.main.async {
-            self.fridaStatusLabel.text = statusText
-            self.fridaVersionLabel.text = versionText
-            self.buttonStart.setTitle(toggleFridaText, for: .normal)
+            DispatchQueue.main.async {
+                self.fridaStatusLabel.text = statusText
+                self.fridaVersionLabel.text = versionText
+                self.buttonStart.setTitle(toggleFridaText, for: .normal)
+            }
         }
     }
 }
@@ -444,6 +520,8 @@ extension SetupFridaViewController: ViewCode {
         stackView.addArrangedSubview(versionDropdown)
         stackView.addArrangedSubview(buttonStart)
 
+        view.addSubview(downloadProgressLabel)
+        view.addSubview(downloadProgressBar)
     }
 
     func setupConstraints() {
@@ -467,7 +545,7 @@ extension SetupFridaViewController: ViewCode {
             circuitLeftDownImageView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             circuitLeftDownImageView.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor),
 
-            fridaMenuImageView.centerYAnchor.constraint(equalTo: view.centerYAnchor, constant: -32),
+            fridaMenuImageView.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 32),
             fridaMenuImageView.centerXAnchor.constraint(equalTo: view.centerXAnchor, constant: -8),
 
             fridaVersionLabel.topAnchor.constraint(equalTo: fridaMenuImageView.bottomAnchor, constant: 24),
@@ -480,6 +558,15 @@ extension SetupFridaViewController: ViewCode {
             stackView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 24),
             stackView.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -24),
             stackView.heightAnchor.constraint(equalToConstant: 50),
+
+            downloadProgressLabel.topAnchor.constraint(equalTo: stackView.bottomAnchor, constant: 20),
+            downloadProgressLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 24),
+            downloadProgressLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -24),
+
+            downloadProgressBar.topAnchor.constraint(equalTo: downloadProgressLabel.bottomAnchor, constant: 8),
+            downloadProgressBar.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 24),
+            downloadProgressBar.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -24),
+            downloadProgressBar.heightAnchor.constraint(equalToConstant: 6),
         ])
     }
 }

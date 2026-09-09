@@ -142,6 +142,24 @@ static int is_allowed_bundle(const char *bundle_id) {
     return 0;
 }
 
+// Escapes a string for safe embedding inside single quotes in a shell command:
+// replaces each ' with '\'' (close quote, literal escaped quote, reopen quote).
+static int shell_quote_single(const char *in, char *out, size_t out_size) {
+    size_t j = 0;
+    for (size_t i = 0; in[i] != '\0'; i++) {
+        if (in[i] == '\'') {
+            if (j + 4 >= out_size) return -1;
+            out[j++] = '\''; out[j++] = '\\'; out[j++] = '\''; out[j++] = '\'';
+        } else {
+            if (j + 1 >= out_size) return -1;
+            out[j++] = in[i];
+        }
+    }
+    if (j >= out_size) return -1;
+    out[j] = '\0';
+    return 0;
+}
+
 static int get_bundle_id(pid_t pid, char *out, size_t out_size) {
     char path[PROC_PIDPATHINFO_MAXSIZE];
     if (proc_pidpath(pid, path, sizeof(path)) <= 0) return -1;
@@ -153,8 +171,11 @@ static int get_bundle_id(pid_t pid, char *out, size_t out_size) {
     char plist_path[PROC_PIDPATHINFO_MAXSIZE + 32];
     snprintf(plist_path, sizeof(plist_path), "%s/Info.plist", path);
 
+    char plist_path_q[PROC_PIDPATHINFO_MAXSIZE + 32];
+    if (shell_quote_single(plist_path, plist_path_q, sizeof(plist_path_q)) != 0) return -1;
+
     char cmd[PROC_PIDPATHINFO_MAXSIZE + 128];
-    snprintf(cmd, sizeof(cmd), "defaults read '%s' CFBundleIdentifier 2>/dev/null", plist_path);
+    snprintf(cmd, sizeof(cmd), "defaults read '%s' CFBundleIdentifier 2>/dev/null", plist_path_q);
 
     FILE *p = popen(cmd, "r");
     if (!p) return -1;

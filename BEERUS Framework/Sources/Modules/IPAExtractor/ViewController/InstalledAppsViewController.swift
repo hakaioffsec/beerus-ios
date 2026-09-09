@@ -99,7 +99,7 @@ final class InstalledAppsViewController: BaseViewController {
     }
 
     private func performDump(app: AppModel, loadingVC: LoadingViewController) {
-        Task {
+        dumpTask = Task {
             do {
                 let startTime = Date()
 
@@ -112,6 +112,8 @@ final class InstalledAppsViewController: BaseViewController {
                     throw DumpError.fridaNotRunning
                 }
                 loadingVC.addLog("frida server running on port 27042")
+
+                try Task.checkCancellation()
 
                 loadingVC.updatePhase(.attaching)
                 loadingVC.addLog("attaching to process \(app.pid)")
@@ -147,6 +149,8 @@ final class InstalledAppsViewController: BaseViewController {
 
                 loadingVC.addLog("path: \(bundleInfo.bundlePath)")
                 loadingVC.addLog("binary: \(bundleInfo.executableName)")
+
+                try Task.checkCancellation()
 
                 let appWithPaths = AppModel(
                     name: bundleInfo.appName,
@@ -187,6 +191,8 @@ final class InstalledAppsViewController: BaseViewController {
                         }
                     }
                 }
+            } catch is CancellationError {
+                // Cancelled by the user; onCancel already dismissed loadingVC and cleared state.
             } catch {
                 loadingVC.showError(error)
                 await MainActor.run {

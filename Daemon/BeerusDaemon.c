@@ -51,7 +51,6 @@ static int     g_cdhash_loaded = 0;
 #include <fnmatch.h>
 #include <time.h>
 #include "BeerusInjector.h"
-#include "MachOPatcher.h"
 extern char **environ;
 
 static int srv = -1;
@@ -448,14 +447,13 @@ static int verify_client(int fd) {
         return 0;
 
     // Layer 2: CDHash validation (cryptographic identity)
-    // ponytail: temporarily disabled for debugging
-    // if (g_cdhash_loaded) {
-    //     uint8_t client_hash[CS_CDHASH_LEN];
-    //     if (get_cdhash_for_pid(pid, client_hash) != 0)
-    //         return 0;
-    //     if (memcmp(client_hash, g_allowed_cdhash, CS_CDHASH_LEN) != 0)
-    //         return 0;
-    // }
+    if (g_cdhash_loaded) {
+        uint8_t client_hash[CS_CDHASH_LEN];
+        if (get_cdhash_for_pid(pid, client_hash) != 0)
+            return 0;
+        if (memcmp(client_hash, g_allowed_cdhash, CS_CDHASH_LEN) != 0)
+            return 0;
+    }
 
     return 1;
 }
@@ -558,9 +556,29 @@ static int run_shell_capture(const char *cmd, char *out, size_t out_size) {
     return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
 }
 
+// Escapes a string for safe embedding inside single quotes in a shell command:
+// replaces each ' with '\'' (close quote, literal escaped quote, reopen quote).
+static int shell_quote_single(const char *in, char *out, size_t out_size) {
+    size_t j = 0;
+    for (size_t i = 0; in[i] != '\0'; i++) {
+        if (in[i] == '\'') {
+            if (j + 4 >= out_size) return -1;
+            out[j++] = '\''; out[j++] = '\\'; out[j++] = '\''; out[j++] = '\'';
+        } else {
+            if (j + 1 >= out_size) return -1;
+            out[j++] = in[i];
+        }
+    }
+    if (j >= out_size) return -1;
+    out[j] = '\0';
+    return 0;
+}
+
 static void rm_rf(const char *path) {
-    char cmd[1200];
-    snprintf(cmd, sizeof(cmd), "rm -rf '%s'", path);
+    char escaped[2400];
+    if (shell_quote_single(path, escaped, sizeof(escaped)) != 0) return;
+    char cmd[2500];
+    snprintf(cmd, sizeof(cmd), "rm -rf '%s'", escaped);
     run_shell(cmd);
 }
 
@@ -589,6 +607,13 @@ static int install_from_deb(const char *deb_path, char *out, size_t out_size) {
         return -1;
     }
 
+    char deb_path_q[2200];
+    if (shell_quote_single(deb_path, deb_path_q, sizeof(deb_path_q)) != 0) {
+        rm_rf(tmpdir);
+        snprintf(out, out_size, "error: path too long to process safely");
+        return -1;
+    }
+
     // Build rootless-aware tool paths
     char dpkg_deb_path[512], dpkg_path[512], ar_path[512], tar_path[512];
     if (g_rootless) {
@@ -604,22 +629,22 @@ static int install_from_deb(const char *deb_path, char *out, size_t out_size) {
     }
 
     // ponytail: use run_shell - popen uses /bin/sh which doesn't exist on rootless
-    char extract_cmd[2048];
+    char extract_cmd[2400];
     snprintf(extract_cmd, sizeof(extract_cmd),
-        "%s --extract %s %s", dpkg_deb_path, deb_path, tmpdir);
+        "%s --extract '%s' '%s'", dpkg_deb_path, deb_path_q, tmpdir);
 
     int ok = run_shell(extract_cmd);
 
     if (ok != 0) {
         snprintf(extract_cmd, sizeof(extract_cmd),
-            "%s -x %s %s", dpkg_path, deb_path, tmpdir);
+            "%s -x '%s' '%s'", dpkg_path, deb_path_q, tmpdir);
         ok = run_shell(extract_cmd);
     }
 
     if (ok != 0) {
         snprintf(extract_cmd, sizeof(extract_cmd),
-            "cd %s && %s x %s && for f in data.tar.*; do %s xf \"$f\"; done",
-            tmpdir, ar_path, deb_path, tar_path);
+            "cd '%s' && %s x '%s' && for f in data.tar.*; do %s xf \"$f\"; done",
+            tmpdir, ar_path, deb_path_q, tar_path);
         ok = run_shell(extract_cmd);
         if (ok != 0) {
             rm_rf(tmpdir);
@@ -1137,8 +1162,16 @@ static int install_ipa(const char *ipa_path, char *out, size_t out_size) {
 
     rm_rf(dest);
 
+    char app_path_q[2200], dest_q[2200];
+    if (shell_quote_single(app_path, app_path_q, sizeof(app_path_q)) != 0 ||
+        shell_quote_single(dest, dest_q, sizeof(dest_q)) != 0) {
+        rm_rf(tmpdir);
+        snprintf(out, out_size, "error: path too long to process safely");
+        return -1;
+    }
+
     char cp_cmd[2400];
-    snprintf(cp_cmd, sizeof(cp_cmd), "cp -R '%s' '%s'", app_path, dest);
+    snprintf(cp_cmd, sizeof(cp_cmd), "cp -R '%s' '%s'", app_path_q, dest_q);
     if (run_shell(cp_cmd) != 0) {
         rm_rf(tmpdir);
         snprintf(out, out_size, "error: failed to copy app");
@@ -1146,11 +1179,11 @@ static int install_ipa(const char *ipa_path, char *out, size_t out_size) {
     }
 
     char chmod_cmd[1300];
-    snprintf(chmod_cmd, sizeof(chmod_cmd), "chmod -R 755 '%s'", dest);
+    snprintf(chmod_cmd, sizeof(chmod_cmd), "chmod -R 755 '%s'", dest_q);
     run_shell(chmod_cmd);
 
     char uicache_cmd[1300];
-    snprintf(uicache_cmd, sizeof(uicache_cmd), "uicache -p '%s'", dest);
+    snprintf(uicache_cmd, sizeof(uicache_cmd), "uicache -p '%s'", dest_q);
     run_shell(uicache_cmd);
 
     rm_rf(tmpdir);
@@ -1395,8 +1428,14 @@ static int install_extracted_app(const char *app_path, char *out, size_t out_siz
         snprintf(uicache_path, sizeof(uicache_path), "/usr/bin/uicache");
     }
 
-    char uicache_cmd[1300];
-    snprintf(uicache_cmd, sizeof(uicache_cmd), "'%s' -p '%s' 2>&1", uicache_path, dest);
+    char dest_q[2400];
+    if (shell_quote_single(dest, dest_q, sizeof(dest_q)) != 0) {
+        snprintf(out, out_size, "ok: %s installed (path too long to refresh icon cache)", app_name);
+        return 0;
+    }
+
+    char uicache_cmd[2500];
+    snprintf(uicache_cmd, sizeof(uicache_cmd), "'%s' -p '%s' 2>&1", uicache_path, dest_q);
     char uicache_out[256] = {0};
     int uicache_result = run_shell_capture(uicache_cmd, uicache_out, sizeof(uicache_out));
 
@@ -1416,6 +1455,12 @@ static int open_app(const char *bundle_id, char *out, size_t out_size) {
         return -1;
     }
 
+    char bundle_id_q[600];
+    if (shell_quote_single(bundle_id, bundle_id_q, sizeof(bundle_id_q)) != 0) {
+        snprintf(out, out_size, "error: bundle_id too long");
+        return -1;
+    }
+
     // ponytail: try 'open' first, then uiopen
     char open_path[512];
     if (g_rootless) {
@@ -1426,7 +1471,7 @@ static int open_app(const char *bundle_id, char *out, size_t out_size) {
 
     if (access(open_path, X_OK) == 0) {
         char cmd[1024];
-        snprintf(cmd, sizeof(cmd), "'%s' '%s' 2>&1", open_path, bundle_id);
+        snprintf(cmd, sizeof(cmd), "'%s' '%s' 2>&1", open_path, bundle_id_q);
         char cmd_out[256] = {0};
         if (run_shell_capture(cmd, cmd_out, sizeof(cmd_out)) == 0) {
             snprintf(out, out_size, "ok: launched %s", bundle_id);
@@ -1444,7 +1489,7 @@ static int open_app(const char *bundle_id, char *out, size_t out_size) {
 
     if (access(uiopen_path, X_OK) == 0) {
         char cmd[1024];
-        snprintf(cmd, sizeof(cmd), "'%s' '%s://' 2>&1", uiopen_path, bundle_id);
+        snprintf(cmd, sizeof(cmd), "'%s' '%s://' 2>&1", uiopen_path, bundle_id_q);
         if (run_shell_capture(cmd, NULL, 0) == 0) {
             snprintf(out, out_size, "ok: launched %s", bundle_id);
             return 0;
@@ -1488,153 +1533,11 @@ static int refresh_springboard(char *out, size_t out_size) {
     return -1;
 }
 
-// ------------------ Mach-O Patching ------------------
-
-// Find app binary path from bundle_id
-// Returns 0 on success, -1 on error
-static int find_app_binary(const char *bundle_id, char *out_path, size_t out_size) {
-    // Try rootless first, then rootful
-    const char *app_dirs[] = {
-        "/var/jb/Applications",
-        "/Applications",
-        "/var/containers/Bundle/Application",  // App Store apps
-        NULL
-    };
-
-    // ponytail: use correct shell path for rootless
-    const char *shell = g_rootless ? "/var/jb/bin/sh" : "/bin/sh";
-
-    for (int i = 0; app_dirs[i]; i++) {
-        char find_cmd[1200];
-        // Find Info.plist with matching bundle ID
-        // ponytail: use correct shell in xargs for rootless compatibility
-        snprintf(find_cmd, sizeof(find_cmd),
-            "find '%s' -name 'Info.plist' -maxdepth 3 2>/dev/null | "
-            "xargs -I{} %s -c 'plutil -p \"{}\" 2>/dev/null | grep -q \"%s\" && dirname \"{}\"' | head -1",
-            app_dirs[i], shell, bundle_id);
-
-        char app_path[1024] = {0};
-        run_shell_capture(find_cmd, app_path, sizeof(app_path));
-        // Trim newline
-        size_t len = strlen(app_path);
-        if (len > 0 && app_path[len-1] == '\n') app_path[len-1] = '\0';
-
-        if (app_path[0] == '\0') continue;
-
-        // Extract app name from .app directory
-        char *app_name = strrchr(app_path, '/');
-        if (!app_name) continue;
-        app_name++;  // skip '/'
-
-        // Remove .app extension to get binary name
-        char binary_name[256];
-        strncpy(binary_name, app_name, sizeof(binary_name) - 1);
-        char *dot = strstr(binary_name, ".app");
-        if (dot) *dot = '\0';
-
-        // Construct full binary path
-        snprintf(out_path, out_size, "%s/%s", app_path, binary_name);
-
-        // Verify it exists
-        if (access(out_path, F_OK) == 0) {
-            return 0;
-        }
-
-        // Some apps have different binary name - try reading CFBundleExecutable
-        char exec_cmd[2048];
-        snprintf(exec_cmd, sizeof(exec_cmd),
-            "plutil -p '%s/Info.plist' 2>/dev/null | grep CFBundleExecutable | "
-            "sed 's/.*=> \"\\(.*\\)\"/\\1/'", app_path);
-
-        char exec_name[256] = {0};
-        run_shell_capture(exec_cmd, exec_name, sizeof(exec_name));
-        // Trim newline
-        size_t elen = strlen(exec_name);
-        if (elen > 0 && exec_name[elen-1] == '\n') exec_name[elen-1] = '\0';
-        if (exec_name[0] != '\0') {
-            snprintf(out_path, out_size, "%s/%s", app_path, exec_name);
-            if (access(out_path, F_OK) == 0) {
-                return 0;
-            }
-        }
-    }
-
-    return -1;
-}
-
-// Get Shadow dylib path based on jailbreak type
-static const char *get_bypass_dylib_path(void) {
-    // Shadow uses framework, not dylib - return path for compatibility
-    if (g_rootless) {
-        return "/var/jb/Library/Frameworks/Shadow.framework/Shadow";
-    } else {
-        return "/Library/Frameworks/Shadow.framework/Shadow";
-    }
-}
-
-// Patch app to load our bypass dylib
-static void patch_app(const char *bundle_id, char *out, size_t out_size) {
-    if (!bundle_id || strlen(bundle_id) == 0) {
-        snprintf(out, out_size, "error: bundle_id required");
-        return;
-    }
-
-    char binary_path[1024];
-    if (find_app_binary(bundle_id, binary_path, sizeof(binary_path)) != 0) {
-        snprintf(out, out_size, "error: app not found: %s", bundle_id);
-        return;
-    }
-
-    const char *dylib = get_bypass_dylib_path();
-
-    // Verify dylib exists
-    if (access(dylib, F_OK) != 0) {
-        snprintf(out, out_size, "error: dylib not found: %s", dylib);
-        return;
-    }
-
-    // Patch the binary
-    if (patch_binary(binary_path, dylib) != 0) {
-        snprintf(out, out_size, "error: failed to patch %s", binary_path);
-        return;
-    }
-
-    // Re-sign with ldid
-    if (resign_binary(binary_path, g_rootless) != 0) {
-        snprintf(out, out_size, "error: failed to resign (patch applied but unsigned)");
-        return;
-    }
-
-    snprintf(out, out_size, "ok: patched %s", binary_path);
-}
-
-// Remove our patch from app
-static void unpatch_app(const char *bundle_id, char *out, size_t out_size) {
-    if (!bundle_id || strlen(bundle_id) == 0) {
-        snprintf(out, out_size, "error: bundle_id required");
-        return;
-    }
-
-    char binary_path[1024];
-    if (find_app_binary(bundle_id, binary_path, sizeof(binary_path)) != 0) {
-        snprintf(out, out_size, "error: app not found: %s", bundle_id);
-        return;
-    }
-
-    // Remove the patch
-    if (unpatch_binary(binary_path) != 0) {
-        snprintf(out, out_size, "error: failed to unpatch %s", binary_path);
-        return;
-    }
-
-    // Re-sign with ldid
-    if (resign_binary(binary_path, g_rootless) != 0) {
-        snprintf(out, out_size, "error: failed to resign (patch removed but unsigned)");
-        return;
-    }
-
-    snprintf(out, out_size, "ok: unpatched %s", binary_path);
-}
+// PATCH_APP/UNPATCH_APP and their helpers (find_app_binary, get_bypass_dylib_path,
+// patch_app, unpatch_app) were removed: the underlying patch_binary/unpatch_binary/
+// resign_binary in MachOPatcher.c were stubs ("JB bypass uses different approach now"),
+// unreachable from the app's UI, and fully superseded by the live injection path
+// (INJECT_APP/INJECT_PID/INJECT_ALL in BeerusInjector.c), which is implemented and used.
 
 // ------------------ Handle Client Code ------------------
 
@@ -1649,6 +1552,11 @@ static void handle_client(int fd) {
         close(fd);
         return;
     }
+
+    // A client that authenticates but then stalls before sending data would otherwise
+    // wedge this single-threaded accept loop forever, denying service to everyone else.
+    struct timeval tv = { .tv_sec = 30, .tv_usec = 0 };
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 
     ssize_t n = recv(fd, buf, sizeof(buf) - 1, 0);
     if (n <= 0) goto done;
@@ -1842,7 +1750,8 @@ static void handle_client(int fd) {
         }
         const char *args[] = {"-c", "killall configd"};
         char *output = runCommand(shell_path, args, 2);
-    
+        if (output) free(output);
+
     } else if (strncmp(buf, "SHELL ", 6) == 0) {
         const char *cmd = buf + 6;
 
@@ -1947,6 +1856,10 @@ static void handle_client(int fd) {
     else if (strncmp(buf, "INJECT_PID ", 11) == 0) {
         // Inject into specific PID
         pid_t pid = atoi(buf + 11);
+        if (pid <= 1) {
+            snprintf(out, sizeof(out), "error: refusing to inject into pid %d", pid);
+            goto done;
+        }
         const char *dylib = g_rootless
             ? "/var/jb/Library/Frameworks/Shadow.framework/Shadow"
             : "/Library/Frameworks/Shadow.framework/Shadow";
@@ -1964,12 +1877,18 @@ static void handle_client(int fd) {
             goto done;
         }
 
+        char bundle_id_q[600];
+        if (shell_quote_single(bundle_id, bundle_id_q, sizeof(bundle_id_q)) != 0) {
+            snprintf(out, sizeof(out), "error: bundle_id too long");
+            goto done;
+        }
+
         // Find PID by bundle_id via lsappinfo/ps
         // ponytail: use run_shell_capture - popen uses /bin/sh which doesn't exist on rootless
-        char cmd[512];
+        char cmd[700];
         snprintf(cmd, sizeof(cmd),
             "ps -eo pid,args 2>/dev/null | grep -F '%s' | grep -v grep | head -1 | awk '{print $1}'",
-            bundle_id);
+            bundle_id_q);
 
         char pid_str[32] = {0};
         run_shell_capture(cmd, pid_str, sizeof(pid_str));
@@ -2002,13 +1921,6 @@ static void handle_client(int fd) {
         } else {
             snprintf(out, sizeof(out), "error: inject_all failed");
         }
-    }
-    // ponytail: Mach-O binary patching - alternative to runtime injection
-    else if (strncmp(buf, "PATCH_APP ", 10) == 0) {
-        patch_app(buf + 10, out, sizeof(out));
-    }
-    else if (strncmp(buf, "UNPATCH_APP ", 12) == 0) {
-        unpatch_app(buf + 12, out, sizeof(out));
     }
     else {
         snprintf(out, sizeof(out), "error: unknown command");

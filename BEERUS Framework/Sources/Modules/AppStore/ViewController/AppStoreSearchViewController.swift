@@ -4,6 +4,7 @@ final class AppStoreSearchViewController: BaseViewController {
 
     private var results: [AppStoreApp] = []
     private var hasSearched = false  // ponytail: tracks if user searched vs initial empty state
+    private var searchTask: Task<Void, Never>?
 
     private lazy var emptyLabel: UILabel = {
         let label = UILabel()
@@ -94,16 +95,19 @@ final class AppStoreSearchViewController: BaseViewController {
     }
 
     private func performSearch(_ term: String) {
+        searchTask?.cancel()
         spinner.startAnimating()
-        Task { @MainActor in
+        searchTask = Task { @MainActor in
             do {
                 let apps = try await AppStoreService.shared.search(term: term)
+                guard !Task.isCancelled else { return }
                 spinner.stopAnimating()
                 hasSearched = true
                 results = apps
                 tableView.backgroundView = apps.isEmpty ? emptyLabel : nil
                 tableView.reloadData()
             } catch {
+                guard !Task.isCancelled else { return }
                 spinner.stopAnimating()
                 showAlert(title: "Search Failed", message: error.localizedDescription)
             }

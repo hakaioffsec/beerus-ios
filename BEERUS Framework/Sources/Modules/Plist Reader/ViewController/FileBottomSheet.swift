@@ -3,8 +3,7 @@ import UIKit
 class FileBottomSheet: UIViewController {
     
     fileprivate let cellReuseIdentifier = "FileBottomSheetCellReuseIdentifier"
-    private var plistsValues: [String:String]
-    private var plistsCount = 0
+    private var plistEntries: [(key: String, value: String)]
     private var fileText: String
     
     private lazy var tableView: UITableView = {
@@ -27,7 +26,7 @@ class FileBottomSheet: UIViewController {
         setup()
     }
     
-    func readPlist() -> [String: String] {
+    func readPlist() -> [(key: String, value: String)] {
         var plistsValues: [String: String] = [:]
         if let dict = NSDictionary(contentsOfFile: fileText) as? [String: Any] {
            for (key, value) in dict {
@@ -35,13 +34,13 @@ class FileBottomSheet: UIViewController {
            }
         }
 
-        return plistsValues
+        return plistsValues.sorted { $0.key < $1.key }
     }
-    
-    
+
+
     init(file: String) {
         self.fileText = file
-        self.plistsValues = [:]
+        self.plistEntries = []
         super.init(nibName: nil, bundle: nil)
     }
     
@@ -50,9 +49,8 @@ class FileBottomSheet: UIViewController {
     }
     
     func setup() {
-        plistsValues = readPlist()
-        plistsCount = plistsValues.count
-        
+        plistEntries = readPlist()
+
         view.addSubview(tableView)
         tableView.rowHeight = UITableView.automaticDimension
         
@@ -68,21 +66,20 @@ class FileBottomSheet: UIViewController {
 
 extension FileBottomSheet: UITableViewDataSource {
     func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        return plistsCount
+        return plistEntries.count
     }
 }
 
 extension FileBottomSheet: UITableViewDelegate {
-        
+
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
         guard let cell = tableView.dequeueReusableCell(withIdentifier: cellReuseIdentifier, for: indexPath) as? FileBottomSheetCell else {
             return FileBottomSheetCell.init(style: .default, reuseIdentifier: cellReuseIdentifier)
         }
-        
-        if (plistsCount > 0) {
-            cell.setupInfos(key: plistsValues.keys.sorted()[indexPath.row], value: plistsValues.values.sorted()[indexPath.row])
-        }
-        
+
+        let entry = plistEntries[indexPath.row]
+        cell.setupInfos(key: entry.key, value: entry.value)
+
         return cell
     }
 }

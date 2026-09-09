@@ -33,7 +33,7 @@ final class ProxyProfilesViewController: BaseViewController {
             if didSave {
                 self.reloadProfiles()
             } else {
-                print("Não foi possível salvar o profile.")
+                self.showAlert(title: "Erro", message: "Não foi possível salvar o perfil. Verifique se o nome já existe.")
             }
         }
     }
@@ -135,15 +135,16 @@ extension ProxyProfilesViewController {
         guard profiles.indices.contains(index) else { return }
 
         let profile = profiles[index]
+        let turningOn = sender.isOn
+        let result = RootExec.setProxy(turningOn ? profile.proxy : "OFF")
 
-        if sender.isOn {
-            _ = RootExec.setProxy(profile.proxy)
-            storage.setProfileEnabled(named: profile.name, enabled: true)
-        } else {
-            _ = RootExec.setProxy("OFF")
-            storage.setProfileEnabled(named: profile.name, enabled: false)
+        guard result.exitCode == 0 else {
+            sender.setOn(!turningOn, animated: true)
+            self.showAlert(title: "Erro", message: "Não foi possível aplicar o proxy.")
+            return
         }
 
+        storage.setProfileEnabled(named: profile.name, enabled: turningOn)
         reloadProfiles()
     }
 

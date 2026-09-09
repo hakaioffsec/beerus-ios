@@ -23,7 +23,7 @@ enum TabOption: String, CaseIterable {
         case .lldbServer: return "ant.fill"
         case .proxyProfiles: return "network"
         case .terminal: return "terminal"
-        case .plistReader: return "house"
+        case .plistReader: return "doc.text.fill"
         case .scriptEditor: return "scroll"
         case .appStore: return "cart.fill"
         case .jailbreakBypass: return "shield.slash"
@@ -38,6 +38,9 @@ enum TabOption: String, CaseIterable {
                 .withRenderingMode(.alwaysTemplate)
         case .memoryDump:
             return UIImage(systemName: "memorychip")?
+                .withRenderingMode(.alwaysTemplate)
+        case .plistReader:
+            return UIImage(systemName: "doc.text.fill")?
                 .withRenderingMode(.alwaysTemplate)
         case .ipaExtractor:
             return UIImage(systemName: "arrow.down.app.fill")?
