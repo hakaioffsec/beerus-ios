@@ -50,21 +50,23 @@ Learn more in our [Blog Post](https://yokai.hakaisecurity.io/enbeerus-framework-
 
 ## 🛠️ Build and Install <a name="build"></a>
 
-1. Connect your iOS device on Mac
-2. Run the command below:
+1. Set up **Xcode and the iPhoneOS SDK** on your Mac.
+2. Build the project using the appropriate command for your jailbreak environment:
 
-#### For Rootfull
+#### Rootful
+
 ```bash
 ./init build
 ```
 
-#### For Rootless
+#### Rootless
+
 ```bash
 ./init build --rootless
 ```
 
-3. Copy the file to the iOS device using scp
-4. ​​Install it using dpkg
+3. Copy the generated `.deb` package to your iOS device using **SCP**.
+4. Install the `.deb` package on your iOS device using **dpkg**.
 
 ## 📦 Downloads
 
