@@ -49,9 +49,4 @@ class BaseViewController: UIViewController {
         menuDelegate?.didTapMenuButton()
         menuButton.setImage(getMenuButtonImage(), for: .normal)
     }
-    
-    func setupAdditionalConfiguration() {
-        view.backgroundColor = UIColor(named: "Background")
-        navigationController?.navigationBar.isHidden = true
-    }
 }
