@@ -12,7 +12,10 @@ final class TerminalCoordinator: Coordinator {
     }
 
     private lazy var rootViewController: TerminalViewController = {
+        let viewModel = TerminalViewModel()
+        viewModel.coordinator = self
         let viewController = TerminalViewController()
+        viewController.viewModel = viewModel
         viewController.menuDelegate = menuDelegate
         return viewController
     }()
