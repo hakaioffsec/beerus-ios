@@ -12,8 +12,10 @@ final class LLDBServerService: Sendable {
     let logFile = "/tmp/beerus-debugserver.log"
 
     private let searchPaths = [
-        "/usr/bin/debugserver",       "/var/jb/usr/bin/debugserver",
-        "/usr/local/bin/debugserver", "/var/jb/usr/local/bin/debugserver",
+        "/usr/bin/debugserver",
+        "/var/jb/usr/bin/debugserver",
+        "/usr/local/bin/debugserver",
+        "/var/jb/usr/local/bin/debugserver",
     ]
 
     var isDaemonRunning: Bool { RootExec.isRunning }

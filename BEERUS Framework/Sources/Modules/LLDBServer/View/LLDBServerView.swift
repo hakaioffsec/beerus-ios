@@ -3,7 +3,7 @@ import UIKit
 final class LLDBServerView: UIView {
 
     private let green = UIColor(red: 0.3, green: 0.9, blue: 0.4, alpha: 1)
-    private let dim   = UIColor(white: 0.3, alpha: 1)
+    private let dim = UIColor(white: 0.3, alpha: 1)
     private let muted = UIColor(white: 0.4, alpha: 1)
     private let iconCfg = UIImage.SymbolConfiguration(pointSize: 36, weight: .medium)
 
