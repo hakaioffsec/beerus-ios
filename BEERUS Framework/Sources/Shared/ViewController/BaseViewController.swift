@@ -22,6 +22,9 @@ class BaseViewController: UIViewController {
     
     override func viewDidLoad() {
         super.viewDidLoad()
+        view.backgroundColor = UIColor(named: "Background")
+        navigationController?.navigationBar.isHidden = true
+
         view.addSubview(menuButton)
 
         NSLayoutConstraint.activate([
