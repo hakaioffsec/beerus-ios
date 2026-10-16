@@ -175,8 +175,7 @@ final class AppStoreService {
         }
 
         var redirect: String? = nil
-        var lastResponse: (data: Data, http: HTTPURLResponse)?
-        var hadInvalidCredentials = false  // ponytail: track if we already got -5000
+        var hadInvalidCredentials = false
 
         for attempt in 1...4 {
             var url: String = redirect ?? endpoint
@@ -213,8 +212,6 @@ final class AppStoreService {
             guard let http = response as? HTTPURLResponse else {
                 throw AppStoreError.loginFailed("invalid response")
             }
-
-            lastResponse = (data, http)
 
             #if DEBUG
             NSLog("[AppStore] Status: %d", http.statusCode)

@@ -48,8 +48,8 @@ final class MemoryDumpLoadingViewModel {
                 let result = try await FridaManager.shared.dumpMemory(
                     pid: app.pid,
                     outputDir: outputDir
-                ) { [weak self] msg in
-                    self?.onLog(msg)
+                ) { msg in
+                    self.onLog(msg)
                 }
 
                 try Task.checkCancellation()

@@ -1,6 +1,5 @@
 import Foundation
 
-@MainActor
 final class ProcessPickerViewModel {
 
     var onReload: () -> Void = {}
@@ -10,7 +9,7 @@ final class ProcessPickerViewModel {
     private var allProcesses: [DeviceProcess] = []
     private var filtered: [DeviceProcess] = []
 
-    nonisolated init(service: LLDBServerService, onSelect: @escaping (DeviceProcess) -> Void) {
+    init(service: LLDBServerService, onSelect: @escaping (DeviceProcess) -> Void) {
         self.service = service
         self.onSelect = onSelect
     }
@@ -39,9 +38,11 @@ final class ProcessPickerViewModel {
         let service = self.service
         Task {
             let procs = await Task.detached(priority: .userInitiated) { service.listProcesses() }.value
-            self.allProcesses = procs
-            self.filtered = procs
-            self.onReload()
+            await MainActor.run {
+                self.allProcesses = procs
+                self.filtered = procs
+                self.onReload()
+            }
         }
     }
 }

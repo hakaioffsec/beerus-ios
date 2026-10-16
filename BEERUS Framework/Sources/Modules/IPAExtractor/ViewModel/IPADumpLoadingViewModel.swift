@@ -59,8 +59,8 @@ final class IPADumpLoadingViewModel {
                     bundleId: app.bundleIdentifier,
                     pid: app.pid,
                     outputPath: dumpPath
-                ) { [weak self] msg in
-                    self?.onLog(msg)
+                ) { msg in
+                    self.onLog(msg)
                 }
 
                 guard FileManager.default.fileExists(atPath: dumpPath) else {
@@ -92,10 +92,10 @@ final class IPADumpLoadingViewModel {
                 onLog("creating ipa archive")
                 onLog("packaging: \(bundleInfo.appName)")
 
-                let ipaURL = try IPABuilder.build(app: appWithPaths, dumpedExecutable: dumpPath) { [weak self] msg in
-                    self?.onLog(msg)
-                } progressCallback: { [weak self] done, total in
-                    self?.onProgress(done, total)
+                let ipaURL = try IPABuilder.build(app: appWithPaths, dumpedExecutable: dumpPath) { msg in
+                    self.onLog(msg)
+                } progressCallback: { done, total in
+                    self.onProgress(done, total)
                 }
 
                 try? FileManager.default.removeItem(atPath: dumpPath)

@@ -148,6 +148,12 @@ final class FridaManager {
             let lock = NSLock()
             var lastActivity = Date()
 
+            func withLock<T>(_ body: () -> T) -> T {
+                lock.lock()
+                defer { lock.unlock() }
+                return body()
+            }
+
             func resumeSuccess(_ value: [String: Any]) {
                 lock.lock()
                 guard !resumed else { lock.unlock(); return }
@@ -182,9 +188,7 @@ final class FridaManager {
 
                     switch payload["type"] as? String {
                     case "log":
-                        lock.lock()
-                        lastActivity = Date()
-                        lock.unlock()
+                        withLock { lastActivity = Date() }
                         if let msg = payload["message"] as? String {
                             await MainActor.run { onLog(msg) }
                         }
@@ -208,11 +212,8 @@ final class FridaManager {
 
             Task {
                 while true {
-                    try? await Task.sleep(nanoseconds: 5_000_000_000) 
-                    lock.lock()
-                    let done = resumed
-                    let elapsed = Date().timeIntervalSince(lastActivity)
-                    lock.unlock()
+                    try? await Task.sleep(nanoseconds: 5_000_000_000)
+                    let (done, elapsed) = withLock { (resumed, Date().timeIntervalSince(lastActivity)) }
                     if done { return }
                     if elapsed >= idleTimeout {
                         eventTask.cancel()
