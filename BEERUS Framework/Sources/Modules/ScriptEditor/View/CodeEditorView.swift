@@ -399,20 +399,20 @@ final class CodeEditorView: UIView, UITextViewDelegate, UITableViewDataSource, U
                   "Instruction","Thread","Socket","File","Kernel"]
 
         // Order matters — later rules override earlier ones.
-        let commentC  = UIColor(red: 0.40, green: 0.50, blue: 0.40, alpha: 1)
-        let stringC   = UIColor(red: 0.90, green: 0.56, blue: 0.35, alpha: 1)
-        let numberC   = UIColor(red: 0.82, green: 0.77, blue: 0.50, alpha: 1)
-        let keywordC  = UIColor(red: 0.78, green: 0.40, blue: 0.93, alpha: 1)
-        let builtinC  = UIColor(red: 0.30, green: 0.85, blue: 0.65, alpha: 1)
-        let funcC     = UIColor(red: 0.35, green: 0.75, blue: 0.95, alpha: 1)
+        let commentC = UIColor(red: 0.40, green: 0.50, blue: 0.40, alpha: 1)
+        let stringC = UIColor(red: 0.90, green: 0.56, blue: 0.35, alpha: 1)
+        let numberC = UIColor(red: 0.82, green: 0.77, blue: 0.50, alpha: 1)
+        let keywordC = UIColor(red: 0.78, green: 0.40, blue: 0.93, alpha: 1)
+        let builtinC = UIColor(red: 0.30, green: 0.85, blue: 0.65, alpha: 1)
+        let funcC = UIColor(red: 0.35, green: 0.75, blue: 0.95, alpha: 1)
 
         return [
-            (rx(#"//[^\n]*"#),               commentC),
-            (rx(#"/\*[\s\S]*?\*/"#),          commentC),
-            (rx(#""(?:[^"\\]|\\.)*""#),       stringC),
-            (rx(#"'(?:[^'\\]|\\.)*'"#),       stringC),
-            (rx(#"`(?:[^`\\]|\\.)*`"#),       stringC),
-            (rx(#"\b\d+(\.\d+)?\b"#),         numberC),
+            (rx(#"//[^\n]*"#), commentC),
+            (rx(#"/\*[\s\S]*?\*/"#), commentC),
+            (rx(#""(?:[^"\\]|\\.)*""#), stringC),
+            (rx(#"'(?:[^'\\]|\\.)*'"#), stringC),
+            (rx(#"`(?:[^`\\]|\\.)*`"#), stringC),
+            (rx(#"\b\d+(\.\d+)?\b"#), numberC),
             (rx("\\b(" + kw.joined(separator: "|") + ")\\b"), keywordC),
             (rx("\\b(" + bi.joined(separator: "|") + ")\\b"), builtinC),
             (rx(#"\b([a-zA-Z_$][\w$]*)\s*\("#), funcC),
