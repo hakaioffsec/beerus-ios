@@ -25,10 +25,57 @@
 
 ## 📝 Table of Contents
 
+- [Architecture](#architecture)
 - [About](#about)
 - [Build](#build)
 - [Authors](#authors)
 - [References](#acknowledgement)
+
+## 🏗️ Architecture <a name="architecture"></a>
+
+The project follows the **MVVM-C** (Model–View–ViewModel–Coordinator) pattern:
+
+```mermaid
+graph TD
+    subgraph App
+        SD[SceneDelegate] --> AC[AppCoordinator]
+        AC --> CVC[ContainerViewController]
+        CVC --> NAV[UINavigationController]
+    end
+
+    subgraph "Module (per tab)"
+        AC -->|"select(tab)"| MC[ModuleCoordinator]
+        MC -->|builds| VM[ViewModel]
+        MC -->|builds| VC[ViewController]
+        MC -->|builds| V[View]
+
+        VC -->|"loadView"| V
+        VC -->|"binds closures"| VM
+        VM -->|"onState callbacks"| VC
+        VM -->|"navigation calls"| MC
+        MC -->|"push / present"| NAV
+    end
+
+    subgraph Layers
+        direction LR
+        V2[View<br/><i>UIView + ViewCode</i>]
+        VC2[ViewController<br/><i>thin binding</i>]
+        VM2[ViewModel<br/><i>logic + state</i>]
+        C2[Coordinator<br/><i>navigation + alerts</i>]
+        S2[Service<br/><i>shell / network</i>]
+
+        V2 --- VC2 --- VM2 --- C2
+        VM2 --- S2
+    end
+
+    style V2 fill:#2d2d2d,stroke:#666,color:#fff
+    style VC2 fill:#2d2d2d,stroke:#666,color:#fff
+    style VM2 fill:#2d2d2d,stroke:#666,color:#fff
+    style C2 fill:#2d2d2d,stroke:#666,color:#fff
+    style S2 fill:#2d2d2d,stroke:#666,color:#fff
+```
+
+**Modules:** Home, MemoryDump, Proxy, Plist Reader, Terminal, JailbreakBypass, IPAExtractor, Frida, LLDBServer, Sandbox Exfiltration, ScriptEditor, AppStore.
 
 ## 🧐 About <a name="about"></a>
 
